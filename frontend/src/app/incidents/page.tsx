@@ -1,22 +1,43 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { AppShell } from "@/components/layout/AppShell";
 import { ThreatBadge } from "@/components/ui/ThreatBadge";
-import { mockIncidents } from "@/lib/mockData";
-import { Incident, ThreatLevel, PredictionType } from "@/types";
-import { ShieldAlert, Filter, Search, ArrowUpRight } from "lucide-react";
+import { api } from "@/lib/api";
+import { Incident } from "@/types";
+import { ShieldAlert, Filter, Search, ArrowUpRight, RefreshCw, AlertTriangle } from "lucide-react";
 
 export default function IncidentsListPage() {
-  const [incidents] = useState<Incident[]>(mockIncidents);
+  const [incidents, setIncidents] = useState<Incident[]>([]);
   const [threatFilter, setThreatFilter] = useState<string>("ALL");
   const [predictionFilter, setPredictionFilter] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchIncidents = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const params: { threat_level?: string; prediction?: string; limit: number } = { limit: 50 };
+      if (threatFilter !== "ALL") params.threat_level = threatFilter;
+      if (predictionFilter !== "ALL") params.prediction = predictionFilter;
+
+      const res = await api.listIncidents(params);
+      setIncidents(Array.isArray(res) ? res : (res as any)?.incidents || []);
+    } catch (err: any) {
+      setError(err.message || "Failed to retrieve incident records from backend.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [threatFilter, predictionFilter]);
+
+  useEffect(() => {
+    fetchIncidents();
+  }, [fetchIncidents]);
 
   const filteredIncidents = incidents.filter((inc) => {
-    if (threatFilter !== "ALL" && inc.threat_level !== threatFilter) return false;
-    if (predictionFilter !== "ALL" && inc.prediction !== predictionFilter) return false;
     if (
       searchQuery &&
       !inc.incident_id.toLowerCase().includes(searchQuery.toLowerCase()) &&
@@ -42,10 +63,34 @@ export default function IncidentsListPage() {
             </p>
           </div>
 
-          <div className="text-xs text-slate-400">
-            TOTAL LOGGED: <span className="text-cyan-400 font-bold">{incidents.length}</span>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={fetchIncidents}
+              className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 hover:border-slate-500 text-slate-300 text-xs flex items-center gap-1.5 transition"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Refresh</span>
+            </button>
+            <div className="text-xs text-slate-400">
+              TOTAL LOGGED: <span className="text-cyan-400 font-bold">{filteredIncidents.length}</span>
+            </div>
           </div>
         </div>
+
+        {error && (
+          <div className="p-4 rounded-xl bg-red-950/60 border border-red-800 text-red-300 text-xs flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+              <span>{error}</span>
+            </div>
+            <button
+              onClick={fetchIncidents}
+              className="px-3 py-1 rounded bg-red-900 hover:bg-red-800 text-white font-semibold text-xs transition"
+            >
+              Retry
+            </button>
+          </div>
+        )}
 
         {/* Filter Controls Bar */}
         <div className="bg-[#0b101d] border border-slate-800 rounded-xl p-4 flex flex-col md:flex-row gap-4 justify-between items-center text-xs">
@@ -94,7 +139,12 @@ export default function IncidentsListPage() {
 
         {/* Incidents Table */}
         <div className="bg-[#0b101d] border border-slate-800 rounded-xl overflow-hidden">
-          {filteredIncidents.length === 0 ? (
+          {isLoading ? (
+            <div className="p-12 text-center text-xs text-cyan-400 flex flex-col items-center gap-2">
+              <RefreshCw className="w-6 h-6 animate-spin" />
+              <span>Querying incident repository...</span>
+            </div>
+          ) : filteredIncidents.length === 0 ? (
             <div className="p-12 text-center text-xs text-slate-500 space-y-2">
               <ShieldAlert className="w-8 h-8 text-slate-600 mx-auto" />
               <p>No incidents match the active filter criteria.</p>

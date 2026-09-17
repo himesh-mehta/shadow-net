@@ -11,20 +11,44 @@ export default function LoginPage() {
   const router = useRouter();
   const { login } = useAuth();
   const [username, setUsername] = useState("alex.vance");
-  const [password, setPassword] = useState("••••••••••••");
+  const [password, setPassword] = useState("admin123456");
   const [selectedRole, setSelectedRole] = useState<UserRole>("Administrator");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    login(selectedRole);
-    router.push("/dashboard");
+    setError(null);
+    setSubmitting(true);
+    try {
+      await login(selectedRole, username, password);
+      router.push("/dashboard");
+    } catch (err: any) {
+      setError(err.message || "Authentication failed. Ensure backend is running.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleQuickLogin = (role: UserRole, user: string) => {
+  const handleQuickLogin = async (role: UserRole, user: string) => {
+    setError(null);
+    setSubmitting(true);
     setUsername(user);
     setSelectedRole(role);
-    login(role);
-    router.push("/dashboard");
+    const rolePassMap: Record<string, string> = {
+      Administrator: "admin123456",
+      "Security Analyst": "analyst123456",
+      User: "user123456",
+    };
+    setPassword(rolePassMap[role] || "admin123456");
+    try {
+      await login(role);
+      router.push("/dashboard");
+    } catch (err: any) {
+      setError(err.message || "Quick login failed.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -57,6 +81,12 @@ export default function LoginPage() {
               Controlled deepfake voice interception & telemetry environment.
             </p>
           </div>
+
+          {error && (
+            <div className="p-3 rounded-lg bg-red-950/50 border border-red-800 text-red-300 text-xs flex items-center gap-2">
+              <span className="font-bold">ERROR:</span> {error}
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1.5">

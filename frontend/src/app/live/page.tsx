@@ -1,10 +1,13 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import { AppShell } from "@/components/layout/AppShell";
 import { ThreatBadge } from "@/components/ui/ThreatBadge";
 import { SpectrogramMatrix } from "@/components/ui/SpectrogramMatrix";
-import { mockLiveAnalysis } from "@/lib/mockData";
+import { useDetectionWebSocket } from "@/lib/useWebSocket";
+import { api } from "@/lib/api";
+import { DetectionAnalysis, PredictionType, ThreatLevel, WindowResult } from "@/types";
 import {
   Radio,
   Clock,
@@ -13,6 +16,10 @@ import {
   Activity,
   AlertTriangle,
   Zap,
+  Wifi,
+  WifiOff,
+  RefreshCw,
+  ExternalLink,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -25,28 +32,113 @@ import {
 } from "recharts";
 
 export default function LiveDetectionPage() {
-  const [analysis, setAnalysis] = useState(mockLiveAnalysis);
-  const [rollingHistory, setRollingHistory] = useState([
-    { window: "W-0", fakeScore: 0.15 },
-    { window: "W-1", fakeScore: 0.28 },
-    { window: "W-2", fakeScore: 0.35 },
-    { window: "W-3", fakeScore: 0.62 },
-    { window: "W-4", fakeScore: 0.88 },
-    { window: "W-5", fakeScore: 0.94 },
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [activeAlert, setActiveAlert] = useState<{
+    incident_id?: string;
+    message: string;
+    requires_verification: boolean;
+  } | null>(null);
+
+  const [analysis, setAnalysis] = useState<DetectionAnalysis>({
+    session_id: "standby-eval",
+    mode: "demo",
+    model_name: "ResNet18Classifier (Demo Fallback)",
+    prediction: "REAL",
+    confidence: 0.12,
+    threat_level: "LOW",
+    response_action: "LOG_ONLY",
+    detection_latency_ms: 18.5,
+    windows: [],
+    spectrogram_shape: [128, 64],
+  });
+
+  const [rollingHistory, setRollingHistory] = useState<Array<{ window: string; fakeScore: number }>>([
+    { window: "W-0", fakeScore: 0.1 },
   ]);
 
-  // Periodic simulation of live rolling window update
+  // Query active session ID on mount
   useEffect(() => {
-    const interval = setInterval(() => {
-      const nextScore = Math.max(0.1, Math.min(0.98, 0.85 + (Math.random() * 0.2 - 0.1)));
+    let isMounted = true;
+    api.getSessionStatus()
+      .then((res) => {
+        if (isMounted) {
+          if (res?.session_id) {
+            setSessionId(res.session_id);
+          } else {
+            setSessionId("test-session-live");
+          }
+        }
+      })
+      .catch(() => {
+        if (isMounted) setSessionId("test-session-live");
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Connect WebSocket to real backend
+  const { status: wsStatus, lastMessage, connectionError, reconnect } = useDetectionWebSocket(sessionId);
+
+  // Process live WebSocket stream updates
+  useEffect(() => {
+    if (!lastMessage) return;
+
+    if (lastMessage.type === "connection_established") {
+      setAnalysis((prev) => ({
+        ...prev,
+        mode: lastMessage.mode || prev.mode,
+        model_name: lastMessage.model_name || prev.model_name,
+      }));
+    } else if (lastMessage.type === "prediction_update") {
+      const pred = lastMessage.prediction as PredictionType;
+      const conf = lastMessage.confidence as number;
+      const threat = lastMessage.threat_level as ThreatLevel;
+      const latency = lastMessage.latency_ms as number;
+      const mode = lastMessage.mode || "demo";
+      const wins = (lastMessage.windows || []) as WindowResult[];
+
+      setAnalysis((prev) => ({
+        ...prev,
+        prediction: pred,
+        confidence: conf,
+        threat_level: threat,
+        detection_latency_ms: latency,
+        mode,
+        response_action: lastMessage.response_action || prev.response_action,
+        windows: wins,
+      }));
+
+      // Append to rolling chart
       setRollingHistory((prev) => {
         const nextIdx = prev.length;
-        const updated = [...prev.slice(1), { window: `W-${nextIdx}`, fakeScore: parseFloat(nextScore.toFixed(2)) }];
+        const updated = [
+          ...prev.slice(-9),
+          { window: `W-${nextIdx}`, fakeScore: parseFloat(conf.toFixed(2)) },
+        ];
         return updated;
       });
-    }, 2500);
-    return () => clearInterval(interval);
-  }, []);
+
+      if (pred === "DEEPFAKE") {
+        setActiveAlert({
+          message: `Deepfake acoustic signature intercepted with ${(conf * 100).toFixed(1)}% confidence.`,
+          requires_verification: true,
+        });
+      }
+    } else if (lastMessage.type === "alert") {
+      setActiveAlert({
+        incident_id: lastMessage.incident_id,
+        message: lastMessage.message || "Deepfake voice anomaly detected. Session restricted.",
+        requires_verification: Boolean(lastMessage.requires_verification),
+      });
+      setAnalysis((prev) => ({
+        ...prev,
+        prediction: "DEEPFAKE",
+        threat_level: (lastMessage.threat_level as ThreatLevel) || "CRITICAL",
+        confidence: lastMessage.confidence || 0.95,
+      }));
+    }
+  }, [lastMessage]);
 
   return (
     <AppShell>
@@ -64,10 +156,54 @@ export default function LiveDetectionPage() {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* WebSocket Connection Status */}
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-900 border border-slate-800 text-[11px]">
+              {wsStatus === "OPEN" ? (
+                <>
+                  <Wifi className="w-3 h-3 text-emerald-400" />
+                  <span className="text-emerald-400 font-semibold">STREAM LIVE</span>
+                </>
+              ) : wsStatus === "CONNECTING" ? (
+                <>
+                  <RefreshCw className="w-3 h-3 text-amber-400 animate-spin" />
+                  <span className="text-amber-400">CONNECTING...</span>
+                </>
+              ) : (
+                <>
+                  <WifiOff className="w-3 h-3 text-red-400" />
+                  <span className="text-red-400 font-semibold">DISCONNECTED</span>
+                </>
+              )}
+            </div>
+
             <ThreatBadge type={analysis.mode} size="sm" />
             <ThreatBadge type={analysis.threat_level} size="sm" />
           </div>
         </div>
+
+        {/* Visible Alert if ML Service is Unavailable */}
+        {wsStatus === "UNAVAILABLE" && (
+          <div className="p-4 rounded-xl bg-red-950/70 border border-red-800 text-red-300 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="w-5 h-5 text-red-400 shrink-0" />
+              <div>
+                <div className="font-bold text-sm text-white">
+                  ML TELEMETRY SERVICE UNAVAILABLE
+                </div>
+                <div className="text-xs text-red-300/80">
+                  {connectionError || "WebSocket server connection dropped. Ensure FastAPI backend is running on port 8000."}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={reconnect}
+              className="px-3 py-1.5 rounded-lg bg-red-900 hover:bg-red-800 border border-red-700 text-white text-xs font-semibold flex items-center gap-1.5 transition"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Reconnect Stream</span>
+            </button>
+          </div>
+        )}
 
         {/* Primary Alert Banner if DEEPFAKE flagged */}
         {analysis.prediction === "DEEPFAKE" && (
@@ -79,14 +215,24 @@ export default function LiveDetectionPage() {
                   CRITICAL SYNTHETIC SIGNATURE INTERCEPTED
                 </div>
                 <div className="text-xs text-red-300/80">
-                  Acoustic artifact confidence exceeds {analysis.confidence * 100}%. Mitigation: {analysis.response_action}.
+                  Acoustic artifact confidence: {(analysis.confidence * 100).toFixed(1)}%. Mitigation: {analysis.response_action}.
+                  {activeAlert?.message && ` (${activeAlert.message})`}
                 </div>
               </div>
             </div>
 
-            <span className="px-3 py-1 rounded bg-red-900 border border-red-600 text-xs font-bold text-white">
-              SESSION RESTRICTED
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1 rounded bg-red-900 border border-red-600 text-xs font-bold text-white">
+                SESSION RESTRICTED
+              </span>
+              <Link
+                href={`/verify?session_id=${sessionId || "active"}`}
+                className="px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold flex items-center gap-1 transition shadow-lg shadow-amber-950"
+              >
+                <span>MFA Recovery</span>
+                <ExternalLink className="w-3 h-3" />
+              </Link>
+            </div>
           </div>
         )}
 
@@ -116,7 +262,7 @@ export default function LiveDetectionPage() {
                 className={`h-full transition-all duration-500 ${
                   analysis.prediction === "DEEPFAKE" ? "bg-red-500" : "bg-emerald-500"
                 }`}
-                style={{ width: `${analysis.confidence * 100}%` }}
+                style={{ width: `${Math.min(100, analysis.confidence * 100)}%` }}
               />
             </div>
           </div>
@@ -128,7 +274,7 @@ export default function LiveDetectionPage() {
               <Clock className="w-4 h-4 text-cyan-400" />
             </div>
             <div className="text-2xl font-bold text-cyan-400">
-              {analysis.detection_latency_ms} <span className="text-xs font-normal text-slate-500">ms</span>
+              {analysis.detection_latency_ms?.toFixed(1) ?? "20.0"} <span className="text-xs font-normal text-slate-500">ms</span>
             </div>
             <div className="text-[10px] text-slate-500">Fast Fourier & tensor forward pass</div>
           </div>
@@ -143,7 +289,7 @@ export default function LiveDetectionPage() {
               {analysis.model_name}
             </div>
             <div className="text-[10px] text-amber-400 font-semibold uppercase">
-              MODE: {analysis.mode} (SYNTHETIC FALLBACK)
+              MODE: {analysis.mode}
             </div>
           </div>
         </div>
@@ -163,7 +309,7 @@ export default function LiveDetectionPage() {
             <SpectrogramMatrix
               matrix={analysis.windows[0]?.visual_matrix}
               height={180}
-              label="WINDOW #2 (ACTIVE SPEECH INTERVAL)"
+              label={analysis.windows.length > 0 ? `WINDOW #${analysis.windows[0].window_index} (ACTIVE SPEECH)` : "STREAM STANDBY"}
             />
           </div>
 
@@ -205,33 +351,39 @@ export default function LiveDetectionPage() {
             Rolling Window Inference Timeline
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {analysis.windows.map((win) => (
-              <div
-                key={win.window_index}
-                className="p-3.5 rounded-lg bg-slate-950/80 border border-slate-800 space-y-2 text-xs"
-              >
-                <div className="flex justify-between items-center pb-2 border-b border-slate-800/80">
-                  <span className="text-slate-400 font-bold">WINDOW #{win.window_index}</span>
-                  <ThreatBadge type={win.threat_level} size="sm" />
+          {analysis.windows.length === 0 ? (
+            <div className="p-8 text-center text-xs text-slate-500">
+              No audio windows processed yet for active stream. Start a call or upload audio in the Test Bench.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {analysis.windows.map((win) => (
+                <div
+                  key={win.window_index}
+                  className="p-3.5 rounded-lg bg-slate-950/80 border border-slate-800 space-y-2 text-xs"
+                >
+                  <div className="flex justify-between items-center pb-2 border-b border-slate-800/80">
+                    <span className="text-slate-400 font-bold">WINDOW #{win.window_index}</span>
+                    <ThreatBadge type={win.threat_level} size="sm" />
+                  </div>
+                  <div className="flex justify-between text-slate-400">
+                    <span>Timestamp Span:</span>
+                    <span className="text-slate-200">[{win.start_sec?.toFixed(1) ?? 0}s &rarr; {win.end_sec?.toFixed(1) ?? 2}s]</span>
+                  </div>
+                  <div className="flex justify-between text-slate-400">
+                    <span>Synthetic Prob:</span>
+                    <span className={win.fake_probability >= 0.75 ? "text-red-400 font-bold" : "text-emerald-400"}>
+                      {(win.fake_probability * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-slate-400">
+                    <span>Spectrogram Shape:</span>
+                    <span className="text-slate-300">({win.mel_shape?.join(", ") ?? "128, 64"})</span>
+                  </div>
                 </div>
-                <div className="flex justify-between text-slate-400">
-                  <span>Timestamp Span:</span>
-                  <span className="text-slate-200">[{win.start_sec}s &rarr; {win.end_sec}s]</span>
-                </div>
-                <div className="flex justify-between text-slate-400">
-                  <span>Synthetic Prob:</span>
-                  <span className={win.fake_probability >= 0.75 ? "text-red-400 font-bold" : "text-emerald-400"}>
-                    {(win.fake_probability * 100).toFixed(1)}%
-                  </span>
-                </div>
-                <div className="flex justify-between text-slate-400">
-                  <span>Spectrogram Shape:</span>
-                  <span className="text-slate-300">({win.mel_shape.join(", ")})</span>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </AppShell>

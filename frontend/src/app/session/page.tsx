@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { ThreatBadge } from "@/components/ui/ThreatBadge";
 import { WaveformVisualizer } from "@/components/ui/WaveformVisualizer";
-import { mockActiveSession } from "@/lib/mockData";
-import { Session } from "@/types";
+import { api } from "@/lib/api";
+import { Session, DetectionAnalysis } from "@/types";
 import {
   Mic,
   Square,
@@ -16,23 +16,50 @@ import {
   FileAudio,
   Radio,
   AlertOctagon,
+  Zap,
+  CheckCircle,
+  AlertTriangle,
 } from "lucide-react";
 
 export default function SessionPage() {
-  const [session, setSession] = useState<Session>(mockActiveSession);
+  const [session, setSession] = useState<Session | null>(null);
   const [isRecording, setIsRecording] = useState(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState(165); // 02:45
-  const [selectedFile, setSelectedFile] = useState<string | null>("sample_test.wav");
-  const [statusMessage, setStatusMessage] = useState("Controlled audio ingestion active. Analyzing rolling windows.");
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState("Ready. Start a test session or ingest WAV audio to analyze.");
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [lastAnalysis, setLastAnalysis] = useState<DetectionAnalysis | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+
+  // Check initial active session
+  useEffect(() => {
+    let isMounted = true;
+    api.getSessionStatus()
+      .then((res) => {
+        if (isMounted && res?.session_id) {
+          setSession(res as unknown as Session);
+          setStatusMessage(`Active session ${res.session_id} resumed.`);
+        }
+      })
+      .catch(() => {
+        // Backend not ready or unauthorized
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Duration timer
   useEffect(() => {
-    if (session.status !== "active") return;
+    if (!session || session.status !== "active") return;
     const interval = setInterval(() => {
       setElapsedSeconds((prev) => prev + 1);
     }, 1000);
     return () => clearInterval(interval);
-  }, [session.status]);
+  }, [session]);
 
   const formatTimer = (secs: number) => {
     const m = Math.floor(secs / 60).toString().padStart(2, "0");
@@ -40,43 +67,133 @@ export default function SessionPage() {
     return `${m}:${s}`;
   };
 
-  const handleToggleSession = () => {
-    if (session.status === "active") {
-      setSession({
-        ...session,
-        status: "stopped",
-        stopped_at: new Date().toISOString(),
-      });
-      setIsRecording(false);
-      setStatusMessage("Controlled test session terminated.");
+  const handleToggleSession = async () => {
+    setError(null);
+    if (session && session.status === "active") {
+      try {
+        const stopped = await api.stopSession(session.session_id);
+        setSession(stopped);
+        if (isRecording) {
+          stopRecording();
+        }
+        setStatusMessage(`Session ${stopped.session_id} stopped.`);
+      } catch (err: any) {
+        setError(err.message || "Failed to stop session");
+      }
     } else {
-      setSession({
-        ...mockActiveSession,
-        session_id: "sess-" + Math.random().toString(36).substring(2, 8),
-        status: "active",
-        started_at: new Date().toISOString(),
-        stopped_at: null,
-      });
-      setElapsedSeconds(0);
-      setStatusMessage("New test session initiated. Audio pipeline online.");
+      try {
+        const newSession = await api.startSession({
+          client_label: "test-eval-bench",
+          store_audio: false,
+        });
+        setSession(newSession);
+        setElapsedSeconds(0);
+        setStatusMessage(`New test session ${newSession.session_id} started.`);
+      } catch (err: any) {
+        setError(err.message || "Failed to start session. Check backend connectivity.");
+      }
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach((track) => track.stop());
+      audioStreamRef.current = null;
+    }
+    setIsRecording(false);
+  };
+
+  const startRecording = async () => {
+    if (!session || session.status !== "active") {
+      setError("Please start a test session before capturing microphone audio.");
+      return;
+    }
+
+    try {
+      setError(null);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
+
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = async (event) => {
+        if (event.data && event.data.size > 0 && session?.session_id) {
+          try {
+            const reader = new FileReader();
+            reader.readAsDataURL(event.data);
+            reader.onloadend = async () => {
+              const base64Data = (reader.result as string)?.split(",")[1];
+              if (base64Data) {
+                try {
+                  const res = await api.analyzeAudioChunk({
+                    session_id: session.session_id,
+                    audio_base64: base64Data,
+                  });
+                  setLastAnalysis(res);
+                  setStatusMessage(`Window analyzed: ${res.prediction} (${(res.confidence * 100).toFixed(1)}%) in ${res.detection_latency_ms?.toFixed(1) ?? 20}ms`);
+                } catch {
+                  // Fallback or ignore streaming chunk error
+                }
+              }
+            };
+          } catch {
+            // ignore
+          }
+        }
+      };
+
+      // Emit chunk every 2000ms
+      mediaRecorder.start(2000);
+      setIsRecording(true);
+      setStatusMessage("Microphone stream active. Analyzing 2.0s rolling acoustic windows.");
+    } catch (err: any) {
+      setError("Could not access microphone: " + (err.message || "Permission denied"));
     }
   };
 
   const handleToggleMic = () => {
-    if (session.status !== "active") return;
-    setIsRecording(!isRecording);
-    setStatusMessage(
-      !isRecording
-        ? "Microphone live capture active (16kHz PCM stream to VAD)."
-        : "Microphone paused. Awaiting WAV or resumed stream."
-    );
+    if (isRecording) {
+      stopRecording();
+      setStatusMessage("Microphone capture paused.");
+    } else {
+      startRecording();
+    }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setSelectedFile(file.name);
-      setStatusMessage(`Ingested ${file.name} (WAV). Analyzing acoustic features...`);
+    if (!file) return;
+
+    setSelectedFile(file.name);
+    setError(null);
+    setIsAnalyzing(true);
+    setStatusMessage(`Uploading and analyzing ${file.name}...`);
+
+    try {
+      let activeSessionId = session?.session_id;
+      if (!activeSessionId || session?.status !== "active") {
+        const tempSession = await api.startSession({
+          client_label: "wav-upload-eval",
+          store_audio: false,
+        });
+        setSession(tempSession);
+        activeSessionId = tempSession.session_id;
+      }
+
+      const res = await api.analyzeAudioFile(file, activeSessionId);
+      setLastAnalysis(res);
+      setStatusMessage(
+        `Analysis complete: ${res.prediction} (${(res.confidence * 100).toFixed(1)}% confidence, latency ${res.detection_latency_ms?.toFixed(1) ?? 20}ms).`
+      );
+    } catch (err: any) {
+      setError(err.message || "Failed to analyze audio file. Ensure WAV format is used.");
+      setStatusMessage("Audio analysis failed.");
+    } finally {
+      setIsAnalyzing(false);
     }
   };
 
@@ -105,12 +222,12 @@ export default function SessionPage() {
             <button
               onClick={handleToggleSession}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition ${
-                session.status === "active"
+                session && session.status === "active"
                   ? "bg-red-950/80 text-red-300 border border-red-800 hover:bg-red-900"
                   : "bg-emerald-600 text-white hover:bg-emerald-500"
               }`}
             >
-              {session.status === "active" ? (
+              {session && session.status === "active" ? (
                 <>
                   <Square className="w-3.5 h-3.5 fill-current" />
                   <span>STOP SESSION</span>
@@ -125,6 +242,13 @@ export default function SessionPage() {
           </div>
         </div>
 
+        {error && (
+          <div className="p-3 rounded-lg bg-red-950/60 border border-red-800 text-red-300 text-xs flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
         {/* Live Audio Telemetry & Controls Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Waveform & Recording Canvas */}
@@ -137,15 +261,15 @@ export default function SessionPage() {
             </div>
 
             {/* Canvas Oscilloscope */}
-            <WaveformVisualizer isActive={session.status === "active" && isRecording} height={120} />
+            <WaveformVisualizer isActive={Boolean(session && session.status === "active" && isRecording)} height={120} />
 
             {/* Controls */}
             <div className="flex flex-wrap items-center gap-3 pt-2">
               <button
                 onClick={handleToggleMic}
-                disabled={session.status !== "active"}
+                disabled={!session || session.status !== "active"}
                 className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition ${
-                  session.status !== "active"
+                  !session || session.status !== "active"
                     ? "bg-slate-900 text-slate-600 border border-slate-800 cursor-not-allowed"
                     : isRecording
                     ? "bg-red-600 hover:bg-red-500 text-white animate-pulse"
@@ -158,10 +282,11 @@ export default function SessionPage() {
 
               <label className="px-4 py-2 rounded-lg bg-slate-900 border border-slate-700 hover:border-slate-500 text-slate-200 text-xs font-semibold flex items-center gap-2 cursor-pointer transition">
                 <Upload className="w-4 h-4 text-cyan-400" />
-                <span>Upload Test WAV File</span>
+                <span>{isAnalyzing ? "Processing WAV..." : "Upload Test WAV File"}</span>
                 <input
                   type="file"
-                  accept="audio/wav,audio/x-wav"
+                  accept="audio/wav,audio/x-wav,.wav"
+                  disabled={isAnalyzing}
                   onChange={handleFileUpload}
                   className="hidden"
                 />
@@ -180,30 +305,77 @@ export default function SessionPage() {
               <Radio className="w-3.5 h-3.5 text-cyan-400 animate-pulse shrink-0" />
               <span>{statusMessage}</span>
             </div>
+
+            {/* Real Detection Result Card if available */}
+            {lastAnalysis && (
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-semibold text-slate-300 uppercase flex items-center gap-1.5">
+                    <Zap className="w-3.5 h-3.5 text-cyan-400" />
+                    Latest Acoustic Pipeline Result
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <ThreatBadge type={lastAnalysis.mode || "demo"} size="sm" />
+                    <ThreatBadge type={lastAnalysis.threat_level || "LOW"} size="sm" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div className="p-2.5 rounded bg-[#0b101d] border border-slate-800">
+                    <div className="text-[10px] text-slate-500 uppercase">Verdict</div>
+                    <div className="mt-1">
+                      <ThreatBadge type={lastAnalysis.prediction} size="sm" />
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded bg-[#0b101d] border border-slate-800">
+                    <div className="text-[10px] text-slate-500 uppercase">Confidence</div>
+                    <div className="text-sm font-bold text-white mt-1">
+                      {(lastAnalysis.confidence * 100).toFixed(1)}%
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded bg-[#0b101d] border border-slate-800">
+                    <div className="text-[10px] text-slate-500 uppercase">Latency</div>
+                    <div className="text-sm font-bold text-cyan-400 mt-1">
+                      {lastAnalysis.detection_latency_ms?.toFixed(1) ?? 20} ms
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded bg-[#0b101d] border border-slate-800">
+                    <div className="text-[10px] text-slate-500 uppercase">Response</div>
+                    <div className="text-xs text-slate-300 font-semibold mt-1">
+                      {lastAnalysis.response_action}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Session Metadata & Privacy Policy Card */}
           <div className="bg-[#0b101d] border border-slate-800 rounded-xl p-5 space-y-4">
             <div className="flex justify-between items-center pb-3 border-b border-slate-800">
               <span className="text-xs font-semibold text-slate-200">SESSION METADATA</span>
-              <ThreatBadge type={session.status === "active" ? "LOW" : "HIGH"} size="sm" />
+              <ThreatBadge type={session ? (session.status === "active" ? "LOW" : "HIGH") : "LOW"} size="sm" />
             </div>
 
             <div className="space-y-3 text-xs">
               <div>
                 <div className="text-[10px] text-slate-500 uppercase">Session Identifier</div>
-                <div className="text-cyan-300 font-bold break-all mt-0.5">{session.session_id}</div>
+                <div className="text-cyan-300 font-bold break-all mt-0.5">
+                  {session?.session_id || "NO ACTIVE SESSION"}
+                </div>
               </div>
 
               <div>
                 <div className="text-[10px] text-slate-500 uppercase">Client Ingest Label</div>
-                <div className="text-slate-200 mt-0.5">{session.client_label}</div>
+                <div className="text-slate-200 mt-0.5">
+                  {session?.client_label || "test-bench-standby"}
+                </div>
               </div>
 
               <div>
                 <div className="text-[10px] text-slate-500 uppercase">Operational State</div>
                 <div className="text-emerald-400 font-semibold uppercase mt-0.5">
-                  {session.status}
+                  {session?.status || "STANDBY"}
                 </div>
               </div>
 

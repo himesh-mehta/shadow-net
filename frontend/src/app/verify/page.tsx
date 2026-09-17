@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { ThreatBadge } from "@/components/ui/ThreatBadge";
-import { mockRestrictedSession } from "@/lib/mockData";
+import { api } from "@/lib/api";
 import {
   KeyRound,
   ShieldAlert,
@@ -12,43 +13,82 @@ import {
   Send,
   Info,
   Unlock,
+  RefreshCw,
 } from "lucide-react";
 
-export default function VerifyPage() {
-  const [sessionId, setSessionId] = useState(mockRestrictedSession.session_id);
+function VerifyContent() {
+  const searchParams = useSearchParams();
+  const initialSessionId = searchParams.get("session_id") || "sess-demo-restricted";
+
+  const [sessionId, setSessionId] = useState(initialSessionId);
   const [sessionStatus, setSessionStatus] = useState<"restricted" | "active">("restricted");
   const [otpCode, setOtpCode] = useState("");
   const [generatedOtp, setGeneratedOtp] = useState<string | null>(null);
+  const [disclaimer, setDisclaimer] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const [feedback, setFeedback] = useState<{ type: "success" | "error" | "info"; msg: string } | null>(null);
 
-  const handleRequestOtp = () => {
-    // Simulate prototype MFA generation
-    const mockCode = Math.floor(100000 + Math.random() * 900000).toString();
-    setGeneratedOtp(mockCode);
-    setOtpCode(mockCode); // Pre-fill for easy demonstration
-    setFeedback({
-      type: "info",
-      msg: `[PROTOTYPE SIMULATION] Verification OTP generated: ${mockCode}. (In production, dispatched via OOB telecom channel).`,
-    });
+  // Check session status from API
+  useEffect(() => {
+    api.getSessionStatus()
+      .then((res) => {
+        if (res?.session_id) {
+          setSessionId(res.session_id);
+          setSessionStatus(res.status === "restricted" ? "restricted" : "active");
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleRequestOtp = async () => {
+    setIsLoading(true);
+    setFeedback(null);
+    try {
+      const res = await api.requestOtp({ session_id: sessionId });
+      const code = res.prototype_otp || res.otp_code || res.otp;
+      if (code) {
+        setGeneratedOtp(code);
+        setOtpCode(code);
+      }
+      setDisclaimer(res.disclaimer || res.simulation_notice || null);
+      setFeedback({
+        type: "info",
+        msg: `[PROTOTYPE SIMULATION] Verification OTP generated: ${res.prototype_otp || res.otp}. (In production, dispatched via OOB telecom channel).`,
+      });
+    } catch (err: any) {
+      setFeedback({
+        type: "error",
+        msg: err.message || "Failed to request OTP from backend.",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleVerify = (e: React.FormEvent) => {
+  const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!otpCode || otpCode.length < 6) {
       setFeedback({ type: "error", msg: "Please enter a valid 6-digit verification code." });
       return;
     }
 
-    if (generatedOtp && otpCode !== generatedOtp) {
-      setFeedback({ type: "error", msg: "Invalid verification code entered." });
-      return;
+    setIsLoading(true);
+    setFeedback(null);
+    try {
+      const res = await api.verifyOtp({ session_id: sessionId, code: otpCode });
+      setSessionStatus("active");
+      setFeedback({
+        type: "success",
+        msg: res.message || "Identity successfully verified via prototype MFA simulation. Session restriction lifted back to ACTIVE.",
+      });
+    } catch (err: any) {
+      setFeedback({
+        type: "error",
+        msg: err.message || "Invalid or expired verification code.",
+      });
+    } finally {
+      setIsLoading(false);
     }
-
-    setSessionStatus("active");
-    setFeedback({
-      type: "success",
-      msg: "Identity successfully verified via prototype MFA simulation. Session restriction lifted back to ACTIVE.",
-    });
   };
 
   return (
@@ -74,7 +114,8 @@ export default function VerifyPage() {
             <span>Prototype Simulation Notice</span>
           </div>
           <p className="text-amber-200/90 leading-relaxed text-[11px]">
-            This verification flow is an experimental security demonstration running in a controlled test bench. It simulates carrier-grade out-of-band challenge response and does not dispatch real cellular SMS or voice calls.
+            {disclaimer ||
+              "This verification flow is an experimental security demonstration running in a controlled test bench. It simulates carrier-grade out-of-band challenge response and does not dispatch real cellular SMS or voice calls."}
           </p>
         </div>
 
@@ -84,7 +125,12 @@ export default function VerifyPage() {
           <div className="flex justify-between items-center p-3.5 rounded-lg bg-slate-950 border border-slate-800/80 text-xs">
             <div>
               <div className="text-[10px] text-slate-500 uppercase">Target Controlled Session</div>
-              <div className="text-cyan-300 font-bold mt-0.5">{sessionId}</div>
+              <input
+                type="text"
+                value={sessionId}
+                onChange={(e) => setSessionId(e.target.value)}
+                className="bg-transparent text-cyan-300 font-bold mt-0.5 focus:outline-none border-b border-dashed border-cyan-800"
+              />
             </div>
             <div>
               <div className="text-[10px] text-slate-500 uppercase text-right">Current Status</div>
@@ -111,9 +157,10 @@ export default function VerifyPage() {
                 <button
                   type="button"
                   onClick={handleRequestOtp}
+                  disabled={isLoading}
                   className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 text-xs font-semibold flex items-center gap-2 transition"
                 >
-                  <Send className="w-3.5 h-3.5" />
+                  {isLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
                   <span>Request Prototype OTP Code</span>
                 </button>
               </div>
@@ -136,9 +183,10 @@ export default function VerifyPage() {
 
                 <button
                   type="submit"
+                  disabled={isLoading}
                   className="w-full py-2.5 px-4 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs tracking-wider uppercase transition flex items-center justify-center gap-2 shadow-lg shadow-amber-950"
                 >
-                  <Unlock className="w-4 h-4" />
+                  {isLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Unlock className="w-4 h-4" />}
                   <span>Authenticate & Unlock Session</span>
                 </button>
               </form>
@@ -180,5 +228,21 @@ export default function VerifyPage() {
         </div>
       </div>
     </AppShell>
+  );
+}
+
+export default function VerifyPage() {
+  return (
+    <Suspense
+      fallback={
+        <AppShell>
+          <div className="flex items-center justify-center min-h-[50vh] text-cyan-400 font-mono text-xs">
+            Loading MFA verification protocol...
+          </div>
+        </AppShell>
+      }
+    >
+      <VerifyContent />
+    </Suspense>
   );
 }
