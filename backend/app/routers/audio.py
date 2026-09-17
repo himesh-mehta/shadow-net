@@ -181,6 +181,20 @@ async def _process_audio_pipeline(
 
     elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
+    # 6. Automated Incident Response if session_id is provided and deepfake detected
+    if session_id and session_verdict["prediction"] == PredictionType.DEEPFAKE:
+        from app.services.incident_service import handle_detection_trigger
+        await handle_detection_trigger(
+            session_id=session_id,
+            prediction=session_verdict["prediction"],
+            confidence=session_verdict["confidence"],
+            threat_level=session_verdict["threat_level"],
+            detection_latency_ms=elapsed_ms,
+            trigger_details={"source": "audio_analyze_endpoint", "windows_count": len(window_summaries)},
+            timeline=[w.dict() for w in window_summaries],
+            db=db,
+        )
+
     return AudioAnalysisResponse(
         status="success",
         session_id=session_id,

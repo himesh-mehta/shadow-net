@@ -20,6 +20,9 @@ from app.routers import (
     settings_router,
     incidents_router,
     audio_router,
+    ws_router,
+    verify_router,
+    analytics_router,
 )
 
 # Configure logging
@@ -43,7 +46,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="SHADOW-NET API",
     description="Real-time Deepfake Voice Interception & Analysis Prototype (Controlled Test Environment)",
-    version="0.3.0",
+    version="0.4.0",
     lifespan=lifespan,
 )
 
@@ -64,6 +67,9 @@ app.include_router(sessions_router)
 app.include_router(settings_router)
 app.include_router(incidents_router)
 app.include_router(audio_router)
+app.include_router(ws_router)
+app.include_router(verify_router)
+app.include_router(analytics_router)
 
 
 @app.get("/health", tags=["System"])
@@ -79,7 +85,7 @@ async def health_check():
     return {
         "status": "ok",
         "service": "shadow-net-backend",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "database": {
             "status": db_status,
             "engine": db_mode,

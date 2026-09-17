@@ -1,9 +1,12 @@
 """
-Incidents management and query module for SHADOW-NET.
-Provides visibility into logged deepfake detection events and threat mitigation actions.
+Incidents Management and Query Module for SHADOW-NET.
+Provides filtering by date range, threat level, prediction type, and session ID,
+plus detailed detection timelines for specific incidents.
 """
 
-from typing import Optional, List
+from datetime import datetime
+from typing import Optional, List, Dict, Any
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.db import get_db
@@ -19,26 +22,41 @@ from app.models.incident import (
 router = APIRouter(prefix="/incidents", tags=["Incidents"])
 
 
+class IncidentDetailResponse(IncidentResponse):
+    timeline: List[Dict[str, Any]] = []
+
+
 @router.get("", response_model=List[IncidentResponse])
 async def list_incidents(
     session_id: Optional[str] = Query(None, description="Filter incidents by session ID"),
     threat_level: Optional[ThreatLevel] = Query(None, description="Filter by threat level"),
     prediction: Optional[PredictionType] = Query(None, description="Filter by prediction type"),
+    start_date: Optional[datetime] = Query(None, description="Filter incidents after this timestamp"),
+    end_date: Optional[datetime] = Query(None, description="Filter incidents before this timestamp"),
     limit: int = Query(50, ge=1, le=200, description="Max number of incidents to return"),
     skip: int = Query(0, ge=0, description="Number of incidents to skip"),
     current_user: UserInDB = Depends(get_current_user),
     db=Depends(get_db),
 ):
     """
-    List recorded deepfake detection incidents with optional filters.
+    List recorded deepfake detection incidents with date, threat level, and prediction filters.
     """
-    query = {}
+    query: Dict[str, Any] = {}
     if session_id:
         query["session_id"] = session_id
     if threat_level:
         query["threat_level"] = threat_level.value
     if prediction:
         query["prediction"] = prediction.value
+
+    # Date range filters
+    date_filter: Dict[str, Any] = {}
+    if start_date:
+        date_filter["$gte"] = start_date
+    if end_date:
+        date_filter["$lte"] = end_date
+    if date_filter:
+        query["timestamp"] = date_filter
 
     cursor = db.incidents.find(query).sort("timestamp", -1).skip(skip).limit(limit)
     incidents = await cursor.to_list(length=limit)
@@ -61,14 +79,14 @@ async def list_incidents(
     ]
 
 
-@router.get("/{incident_id}", response_model=IncidentResponse)
+@router.get("/{incident_id}", response_model=IncidentDetailResponse)
 async def get_incident(
     incident_id: str,
     current_user: UserInDB = Depends(get_current_user),
     db=Depends(get_db),
 ):
     """
-    Retrieve details for a specific incident by its unique identifier.
+    Retrieve details for a specific incident, including its chronological detection timeline.
     """
     doc = await db.incidents.find_one({"incident_id": incident_id})
     if not doc:
@@ -77,7 +95,7 @@ async def get_incident(
             detail=f"Incident '{incident_id}' not found."
         )
 
-    return IncidentResponse(
+    return IncidentDetailResponse(
         incident_id=doc["incident_id"],
         session_id=doc["session_id"],
         timestamp=doc["timestamp"],
@@ -88,5 +106,6 @@ async def get_incident(
         response_action=doc.get("response_action", "ALERT"),
         verification_status=doc.get("verification_status", "PENDING"),
         trigger_details=doc.get("trigger_details", {}),
+        timeline=doc.get("timeline", []),
         store_audio=doc.get("store_audio", False),
     )
