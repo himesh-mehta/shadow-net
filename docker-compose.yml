@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: shadow-net-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=shadow_net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: shadow-net-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017/shadow_net
+      - JWT_SECRET=shadow_net_insecure_development_secret_change_in_production
+      - JWT_ALGORITHM=HS256
+      - DETECTION_THRESHOLD=0.75
+      - MODEL_PATH=/app/model/resnet18.pth
+      - DEMO_MODE=true
+    depends_on:
+      - mongodb
+    volumes:
+      - ./model:/app/model
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: shadow-net-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_WS_URL=ws://localhost:8000
+    depends_on:
+      - backend
+
+volumes:
+  mongo_data:
+    driver: local
