@@ -69,8 +69,8 @@ export function Header() {
 
         <div className="hidden sm:block h-4 w-px bg-slate-800" />
 
-        {/* Phase 3 & 6 Requirement: Visible Persistent DEMO MODE / ML LIVE badge */}
-        <ThreatBadge type={isDemoMode ? "demo" : "ml"} size="sm" className="hidden sm:inline-flex" />
+        {/* Phase 3, 6 & 8 Requirement: Visible Persistent DEMO MODE / ML LIVE badge */}
+        <ThreatBadge type={isDemoMode ? "demo" : "ml"} size="sm" className="inline-flex" />
       </div>
 
       {/* Right: Operator Profile & Role Switcher for Testing */}
