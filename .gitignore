@@ -47,6 +47,8 @@ yarn-error.log*
 # Datasets and Model weights
 datasets/*
 !datasets/.gitkeep
+data/*
+!data/.gitkeep
 model/*.pth
 model/*.pt
 model/*.onnx
