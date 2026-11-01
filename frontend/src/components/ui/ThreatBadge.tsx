@@ -17,10 +17,26 @@ export function ThreatBadge({ type, size = "md", className = "" }: ThreatBadgePr
     case "FAILED":
       style = "bg-red-950/70 text-red-400 border-red-800/80";
       break;
+    case "AI_SUSPECTED":
+      style = "bg-amber-950/70 text-amber-300 border-amber-700/80";
+      label = "AI SUSPECTED";
+      break;
     case "HIGH":
     case "UNCERTAIN":
     case "demo":
       style = "bg-amber-950/70 text-amber-400 border-amber-800/80";
+      break;
+    case "UNCERTAIN (MODEL NOT TRAINED)":
+      style = "bg-amber-950/60 text-amber-300 border-amber-800/70";
+      label = "UNCERTAIN (UNTRAINED)";
+      break;
+    case "NOT_TRAINED":
+      style = "bg-purple-950/70 text-purple-300 border-purple-800/80";
+      label = "MODEL: NOT TRAINED";
+      break;
+    case "EXPERIMENTAL":
+      style = "bg-cyan-950/70 text-cyan-300 border-cyan-800/80";
+      label = "DETECTION: EXPERIMENTAL";
       break;
     case "MEDIUM":
     case "PENDING":
@@ -51,8 +67,12 @@ export function ThreatBadge({ type, size = "md", className = "" }: ThreatBadgePr
         className={`w-1.5 h-1.5 rounded-full ${
           type === "CRITICAL" || type === "DEEPFAKE"
             ? "bg-red-500 animate-pulse"
-            : type === "HIGH" || type === "UNCERTAIN" || type === "demo"
+            : type === "AI_SUSPECTED"
+            ? "bg-amber-400 animate-pulse"
+            : type === "HIGH" || type === "UNCERTAIN" || type === "demo" || type === "UNCERTAIN (MODEL NOT TRAINED)"
             ? "bg-amber-500"
+            : type === "NOT_TRAINED" || type === "EXPERIMENTAL"
+            ? "bg-cyan-400"
             : "bg-emerald-500"
         }`}
       />

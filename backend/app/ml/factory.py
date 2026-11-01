@@ -1,7 +1,8 @@
 """
 Detector Factory & Lifecycle Manager for SHADOW-NET.
-Resolves model weights at MODEL_PATH, initializes the appropriate detector
-(ResNet-18 or DemoFallbackDetector), and provides thread-safe access.
+Loads active model artifacts according to the directory structure:
+    models/<ACTIVE_MODEL_NAME>/<ACTIVE_MODEL_VERSION>/
+with companion metadata.json and weights, and supports legacy MODEL_PATH resolution.
 """
 
 import os
@@ -11,29 +12,48 @@ from typing import Optional
 
 from app.config import get_settings
 from app.ml.base import DetectorInterface
+from app.ml.metadata import load_model_metadata
+from app.ml.classifier import StandardizedAudioDetector
 from app.ml.demo_detector import DemoFallbackDetector
-from app.ml.classifier import ResNet18AudioClassifier
 
 logger = logging.getLogger("shadow_net.ml.factory")
 
 _CURRENT_DETECTOR: Optional[DetectorInterface] = None
 
 
+def resolve_model_dir(models_dir: str, model_name: str, model_version: str) -> Optional[Path]:
+    """
+    Locates the model directory models/<model_name>/<model_version>/.
+    """
+    backend_dir = Path(__file__).resolve().parent.parent.parent
+    project_root = backend_dir.parent
+
+    candidates = [
+        project_root / models_dir / model_name / model_version,
+        backend_dir / models_dir / model_name / model_version,
+        Path.cwd() / models_dir / model_name / model_version,
+    ]
+
+    for c in candidates:
+        if c.is_dir():
+            return c.resolve()
+
+    return None
+
+
 def resolve_model_path(configured_path: str) -> Optional[Path]:
     """
-    Resolves the model path across backend, project root, and absolute paths.
+    Resolves a direct weights checkpoint path across backend, project root, and relative paths.
     """
     p = Path(configured_path)
     if p.is_file():
         return p.resolve()
 
-    # Try relative to backend root
     backend_dir = Path(__file__).resolve().parent.parent.parent
     candidate_1 = (backend_dir / configured_path).resolve()
     if candidate_1.is_file():
         return candidate_1
 
-    # Try relative to project root (e.g. shadow-net/model/resnet18.pth)
     project_root = backend_dir.parent
     candidate_2 = (project_root / configured_path).resolve()
     if candidate_2.is_file():
@@ -49,8 +69,11 @@ def resolve_model_path(configured_path: str) -> Optional[Path]:
 def get_detector(force_reload: bool = False) -> DetectorInterface:
     """
     Returns the active detector instance (cached singleton).
-    Switches to ResNet18AudioClassifier if MODEL_PATH exists and DEMO_MODE is False.
-    Otherwise falls back to DemoFallbackDetector.
+    Reads configuration from app settings:
+    - MODELS_DIR
+    - ACTIVE_MODEL_NAME
+    - ACTIVE_MODEL_VERSION
+    - DEMO_MODE & MODEL_PATH
     """
     global _CURRENT_DETECTOR
 
@@ -58,19 +81,34 @@ def get_detector(force_reload: bool = False) -> DetectorInterface:
         return _CURRENT_DETECTOR
 
     settings = get_settings()
-    resolved_path = resolve_model_path(settings.MODEL_PATH)
+    model_name = getattr(settings, "ACTIVE_MODEL_NAME", "shadownet-audio-detector")
+    model_version = getattr(settings, "ACTIVE_MODEL_VERSION", "v1")
+    models_dir = getattr(settings, "MODELS_DIR", "models")
+    demo_mode = getattr(settings, "DEMO_MODE", True)
+    model_path_str = getattr(settings, "MODEL_PATH", "")
 
-    if resolved_path is not None and not settings.DEMO_MODE:
-        logger.info(f"Model file detected at: {resolved_path}. Initializing ResNet-18 classifier.")
-        classifier = ResNet18AudioClassifier(str(resolved_path))
-        if classifier.is_loaded:
-            _CURRENT_DETECTOR = classifier
+    weights_dir = resolve_model_dir(models_dir, model_name, model_version)
+    metadata = load_model_metadata(models_dir, model_name, model_version)
+
+    # Check if a direct trained model path is configured and DEMO_MODE is False
+    resolved_file = resolve_model_path(model_path_str) if model_path_str else None
+    if not demo_mode and resolved_file is not None:
+        logger.info(f"Production ML mode active: loading weights from {resolved_file}")
+        detector = StandardizedAudioDetector(
+            metadata=metadata,
+            model_path=str(resolved_file),
+        )
+        if detector.is_loaded:
+            _CURRENT_DETECTOR = detector
             return _CURRENT_DETECTOR
-        else:
-            logger.warning("ResNet-18 weights failed to load. Falling back to DemoFallbackDetector.")
 
-    # Fallback to Demo mode
-    _CURRENT_DETECTOR = DemoFallbackDetector()
+    logger.info(
+        f"Initializing detector: {metadata.model_name}:{metadata.model_version} "
+        f"(status={metadata.status}, is_trained={metadata.is_trained})"
+    )
+
+    detector = StandardizedAudioDetector(metadata=metadata, weights_dir=weights_dir)
+    _CURRENT_DETECTOR = detector
     return _CURRENT_DETECTOR
 
 

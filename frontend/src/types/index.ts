@@ -22,7 +22,7 @@ export interface Session {
   notes?: string | null;
 }
 
-export type PredictionType = "REAL" | "DEEPFAKE" | "UNCERTAIN";
+export type PredictionType = "REAL" | "DEEPFAKE" | "AI_SUSPECTED" | "UNCERTAIN";
 export type ThreatLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type ResponseAction = "ALERT" | "RESTRICT_SESSION" | "REQUIRE_MFA" | "NONE" | "LOG_ONLY" | "TERMINATE_CALL";
 export type VerificationStatus = "PENDING" | "VERIFIED" | "FAILED" | "BYPASSED";
@@ -32,8 +32,13 @@ export interface WindowFeature {
   start_sec: number;
   end_sec: number;
   fake_probability: number;
+  ai_probability?: number;
+  real_probability?: number;
   prediction: PredictionType;
+  verdict?: string;
   threat_level: ThreatLevel;
+  speaker_id?: string;
+  is_sustained_threat?: boolean;
   is_padded?: boolean;
   mel_shape?: number[];
   mfcc_shape?: number[];
@@ -47,9 +52,15 @@ export interface AudioAnalysis {
   session_id?: string | null;
   mode: "demo" | "ml";
   model_name: string;
+  model_version?: string;
+  model_status?: "NOT_TRAINED" | "TRAINED";
+  is_heuristic_placeholder?: boolean;
+  display_verdict?: string;
   is_synthetic?: boolean;
   prediction: PredictionType;
   confidence: number;
+  ai_probability?: number;
+  real_probability?: number;
   threat_level: ThreatLevel;
   response_action?: ResponseAction;
   detection_latency_ms?: number;
@@ -60,8 +71,14 @@ export interface AudioAnalysis {
   vad_engine?: string;
   num_windows?: number;
   deepfake_window_count?: number;
+  sustained_threat_detected?: boolean;
   windows: WindowFeature[];
   spectrogram_shape?: number[];
+  explanation?: {
+    top_reason?: string;
+    verdict_summary?: string;
+    details?: string[];
+  };
 }
 
 export type DetectionAnalysis = AudioAnalysis;
@@ -128,4 +145,56 @@ export interface SystemSettings {
   demo_mode: boolean;
   updated_at?: string;
   updated_by?: string;
+}
+
+export interface EvaluationFileResult {
+  filename: string;
+  duration_sec: number;
+  windows_count: number;
+  ground_truth: "REAL" | "DEEPFAKE";
+  ground_truth_label: number;
+  predicted_verdict: "REAL" | "DEEPFAKE" | "UNCERTAIN";
+  fake_probability: number;
+  confidence: number;
+  outcome: "TP" | "TN" | "FP" | "FN" | "UNCERTAIN_REAL" | "UNCERTAIN_FAKE";
+  is_correct: boolean;
+  latency_ms: number;
+  top_reason: string;
+  explanation?: {
+    top_reason?: string;
+    details?: string[];
+  };
+}
+
+export interface EvaluationReport {
+  timestamp: string;
+  dataset_directory: string;
+  thresholds: {
+    real_threshold: number;
+    deepfake_threshold: number;
+  };
+  summary: {
+    total_files: number;
+    total_real: number;
+    total_fake: number;
+    strict_accuracy: number;
+    decisive_accuracy: number;
+    precision: number;
+    recall: number;
+    specificity: number;
+    f1_score: number;
+    uncertain_rate: number;
+    average_latency_ms: number;
+    total_processing_time_sec: number;
+  };
+  confusion_matrix: {
+    true_positives: number;
+    true_negatives: number;
+    false_positives: number;
+    false_negatives: number;
+    uncertain_real: number;
+    uncertain_fake: number;
+    total_uncertain: number;
+  };
+  per_file_results: EvaluationFileResult[];
 }

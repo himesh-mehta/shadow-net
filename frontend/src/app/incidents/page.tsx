@@ -6,7 +6,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { ThreatBadge } from "@/components/ui/ThreatBadge";
 import { api } from "@/lib/api";
 import { Incident } from "@/types";
-import { ShieldAlert, Filter, Search, ArrowUpRight, RefreshCw, AlertTriangle } from "lucide-react";
+import { ShieldAlert, Filter, Search, ArrowUpRight, RefreshCw, AlertTriangle, Download, CheckCircle2 } from "lucide-react";
 
 export default function IncidentsListPage() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -15,6 +15,28 @@ export default function IncidentsListPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [exportingId, setExportingId] = useState<string | null>(null);
+
+  const handleExport = async (e: React.MouseEvent, incidentId: string) => {
+    e.stopPropagation();
+    try {
+      setExportingId(incidentId);
+      const packet = await api.exportIncidentEvidence(incidentId);
+      const blob = new Blob([JSON.stringify(packet, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `incident_${incidentId}_evidence_packet.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.message || "Failed to export evidence packet.");
+    } finally {
+      setExportingId(null);
+    }
+  };
 
   const fetchIncidents = useCallback(async () => {
     setIsLoading(true);
@@ -193,13 +215,28 @@ export default function IncidentsListPage() {
                         <ThreatBadge type={inc.verification_status} size="sm" />
                       </td>
                       <td className="py-3 px-4 text-right">
-                        <Link
-                          href={`/incidents/${inc.incident_id}`}
-                          className="px-2.5 py-1 rounded bg-slate-900 border border-slate-700 hover:border-cyan-500 text-cyan-300 text-xs inline-flex items-center gap-1 transition"
-                        >
-                          <span>Inspect</span>
-                          <ArrowUpRight className="w-3 h-3" />
-                        </Link>
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={(e) => handleExport(e, inc.incident_id)}
+                            disabled={exportingId === inc.incident_id}
+                            title="Export tamper-evident forensic evidence packet (JSON with SHA-256 integrity hash)"
+                            className="px-2 py-1 rounded bg-slate-900 border border-slate-700 hover:border-emerald-500 text-emerald-400 text-xs inline-flex items-center gap-1 transition disabled:opacity-50"
+                          >
+                            {exportingId === inc.incident_id ? (
+                              <RefreshCw className="w-3 h-3 animate-spin text-emerald-400" />
+                            ) : (
+                              <Download className="w-3 h-3" />
+                            )}
+                            <span className="hidden sm:inline">Export</span>
+                          </button>
+                          <Link
+                            href={`/incidents/${inc.incident_id}`}
+                            className="px-2.5 py-1 rounded bg-slate-900 border border-slate-700 hover:border-cyan-500 text-cyan-300 text-xs inline-flex items-center gap-1 transition"
+                          >
+                            <span>Inspect</span>
+                            <ArrowUpRight className="w-3 h-3" />
+                          </Link>
+                        </div>
                       </td>
                     </tr>
                   ))}

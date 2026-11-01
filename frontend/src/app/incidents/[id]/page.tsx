@@ -16,6 +16,7 @@ import {
   Activity,
   AlertTriangle,
   RefreshCw,
+  Download,
 } from "lucide-react";
 
 export default function IncidentDetailPage() {
@@ -24,6 +25,28 @@ export default function IncidentDetailPage() {
   const [incident, setIncident] = useState<Incident | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+
+  const handleExport = async () => {
+    if (!id) return;
+    try {
+      setIsExporting(true);
+      const packet = await api.exportIncidentEvidence(id);
+      const blob = new Blob([JSON.stringify(packet, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `incident_${id}_evidence_packet.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.message || "Failed to export evidence packet.");
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   useEffect(() => {
     if (!id) return;
@@ -105,15 +128,31 @@ export default function IncidentDetailPage() {
             </p>
           </div>
 
-          {incident.verification_status === "PENDING" && (
-            <Link
-              href={`/verify?session_id=${incident.session_id}`}
-              className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs flex items-center gap-2 transition shadow-lg shadow-amber-950"
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleExport}
+              disabled={isExporting}
+              title="Download cryptographic tamper-evident JSON packet with SHA-256 integrity hash"
+              className="px-3.5 py-2 rounded-lg bg-emerald-950/80 border border-emerald-700/80 hover:bg-emerald-900/80 text-emerald-300 font-bold text-xs flex items-center gap-2 transition shadow-lg shadow-emerald-950/40 disabled:opacity-50"
             >
-              <KeyRound className="w-4 h-4" />
-              <span>Initiate Prototype MFA Unlock</span>
-            </Link>
-          )}
+              {isExporting ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              <span>Export Evidence Packet</span>
+            </button>
+
+            {incident.verification_status === "PENDING" && (
+              <Link
+                href={`/verify?session_id=${incident.session_id}`}
+                className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs flex items-center gap-2 transition shadow-lg shadow-amber-950"
+              >
+                <KeyRound className="w-4 h-4" />
+                <span>Initiate Prototype MFA Unlock</span>
+              </Link>
+            )}
+          </div>
         </div>
 
         {/* Incident Summary Metadata Grid */}

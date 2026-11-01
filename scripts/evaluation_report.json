@@ -1,0 +1,538 @@
+{
+  "timestamp": "2026-11-01T05:27:24.428387+00:00",
+  "dataset_directory": "C:\\SEM\\sem-4\\mini_project\\college\\shadow-net\\datasets\\sample",
+  "thresholds": {
+    "real_threshold": 0.35,
+    "deepfake_threshold": 0.65
+  },
+  "summary": {
+    "total_files": 5,
+    "total_real": 2,
+    "total_fake": 3,
+    "strict_accuracy": 0.0,
+    "decisive_accuracy": 0.0,
+    "precision": 0.0,
+    "recall": 0.0,
+    "specificity": 0.0,
+    "f1_score": 0.0,
+    "uncertain_rate": 1.0,
+    "average_latency_ms": 405.8,
+    "total_processing_time_sec": 2.03
+  },
+  "confusion_matrix": {
+    "true_positives": 0,
+    "true_negatives": 0,
+    "false_positives": 0,
+    "false_negatives": 0,
+    "uncertain_real": 2,
+    "uncertain_fake": 3,
+    "total_uncertain": 5
+  },
+  "per_file_results": [
+    {
+      "filename": "real_01_bonafide_speech.wav",
+      "duration_sec": 3.0,
+      "windows_count": 2,
+      "ground_truth": "REAL",
+      "ground_truth_label": 0,
+      "predicted_verdict": "UNCERTAIN",
+      "fake_probability": 0.4777,
+      "confidence": 0.5,
+      "outcome": "UNCERTAIN_REAL",
+      "is_correct": false,
+      "latency_ms": 1814.5,
+      "top_reason": "Energy barely varies over time \u2014 natural speech has dynamic loudness changes from phoneme transitions, but this audio is unnaturally smooth, a hallmark of voice cloning systems.",
+      "explanation": {
+        "verdict": "UNCERTAIN",
+        "confidence": 0.5,
+        "fake_probability": 0.4777,
+        "summary": "The model cannot confidently classify this audio (fake_prob=0.48). 1 suspicious feature(s) detected \u2014 manual review recommended.",
+        "top_reason": "Energy barely varies over time \u2014 natural speech has dynamic loudness changes from phoneme transitions, but this audio is unnaturally smooth, a hallmark of voice cloning systems.",
+        "mode": "demo",
+        "indicators": [
+          {
+            "name": "temporal_variance",
+            "label": "Temporal Energy Variance",
+            "value": 0.4388,
+            "normal_min": 40.0,
+            "normal_max": 900.0,
+            "is_suspicious": true,
+            "direction": "unusually low",
+            "suspicion_weight": 0.046,
+            "plain_english": "Energy barely varies over time \u2014 natural speech has dynamic loudness changes from phoneme transitions, but this audio is unnaturally smooth, a hallmark of voice cloning systems."
+          },
+          {
+            "name": "spectral_flatness",
+            "label": "Spectral Flatness",
+            "value": 0.0114,
+            "normal_min": 0.002,
+            "normal_max": 0.18,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "Spectral Flatness is within the normal range for human speech (0.002\u20130.18)."
+          },
+          {
+            "name": "hf_energy_ratio",
+            "label": "High-Frequency Energy Ratio",
+            "value": 0.0003,
+            "normal_min": 0.0,
+            "normal_max": 0.12,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "High-Frequency Energy Ratio is within the normal range for human speech (0.0\u20130.12)."
+          },
+          {
+            "name": "mfcc1_mean",
+            "label": "MFCC-1 Mean (Loudness)",
+            "value": -175.7236,
+            "normal_min": -600.0,
+            "normal_max": -100.0,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "MFCC-1 Mean (Loudness) is within the normal range for human speech (-600.0\u2013-100.0)."
+          },
+          {
+            "name": "mfcc_delta_energy",
+            "label": "MFCC Temporal Dynamics",
+            "value": 4.9472,
+            "normal_min": 0.5,
+            "normal_max": 25.0,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "MFCC Temporal Dynamics is within the normal range for human speech (0.5\u201325.0)."
+          },
+          {
+            "name": "spectral_centroid_norm",
+            "label": "Spectral Centroid",
+            "value": 0.0567,
+            "normal_min": 0.05,
+            "normal_max": 0.4,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "Spectral Centroid is within the normal range for human speech (0.05\u20130.4)."
+          },
+          {
+            "name": "zero_crossing_rate",
+            "label": "Zero Crossing Rate",
+            "value": 0.1613,
+            "normal_min": 0.01,
+            "normal_max": 0.2,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "Zero Crossing Rate is within the normal range for human speech (0.01\u20130.2)."
+          }
+        ]
+      }
+    },
+    {
+      "filename": "real_02_bonafide_speech.wav",
+      "duration_sec": 3.2,
+      "windows_count": 3,
+      "ground_truth": "REAL",
+      "ground_truth_label": 0,
+      "predicted_verdict": "UNCERTAIN",
+      "fake_probability": 0.4912,
+      "confidence": 0.5,
+      "outcome": "UNCERTAIN_REAL",
+      "is_correct": false,
+      "latency_ms": 59.4,
+      "top_reason": "The zero-crossing rate is abnormally high, suggesting the presence of synthetic noise or vocoder artifacts between phoneme boundaries.",
+      "explanation": {
+        "verdict": "UNCERTAIN",
+        "confidence": 0.5,
+        "fake_probability": 0.4912,
+        "summary": "The model cannot confidently classify this audio (fake_prob=0.49). 2 suspicious feature(s) detected \u2014 manual review recommended.",
+        "top_reason": "The zero-crossing rate is abnormally high, suggesting the presence of synthetic noise or vocoder artifacts between phoneme boundaries.",
+        "mode": "demo",
+        "indicators": [
+          {
+            "name": "zero_crossing_rate",
+            "label": "Zero Crossing Rate",
+            "value": 0.2097,
+            "normal_min": 0.01,
+            "normal_max": 0.2,
+            "is_suspicious": true,
+            "direction": "unusually high",
+            "suspicion_weight": 0.051,
+            "plain_english": "The zero-crossing rate is abnormally high, suggesting the presence of synthetic noise or vocoder artifacts between phoneme boundaries."
+          },
+          {
+            "name": "temporal_variance",
+            "label": "Temporal Energy Variance",
+            "value": 0.4509,
+            "normal_min": 40.0,
+            "normal_max": 900.0,
+            "is_suspicious": true,
+            "direction": "unusually low",
+            "suspicion_weight": 0.046,
+            "plain_english": "Energy barely varies over time \u2014 natural speech has dynamic loudness changes from phoneme transitions, but this audio is unnaturally smooth, a hallmark of voice cloning systems."
+          },
+          {
+            "name": "spectral_flatness",
+            "label": "Spectral Flatness",
+            "value": 0.01,
+            "normal_min": 0.002,
+            "normal_max": 0.18,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "Spectral Flatness is within the normal range for human speech (0.002\u20130.18)."
+          },
+          {
+            "name": "hf_energy_ratio",
+            "label": "High-Frequency Energy Ratio",
+            "value": 0.0003,
+            "normal_min": 0.0,
+            "normal_max": 0.12,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "High-Frequency Energy Ratio is within the normal range for human speech (0.0\u20130.12)."
+          },
+          {
+            "name": "mfcc1_mean",
+            "label": "MFCC-1 Mean (Loudness)",
+            "value": -179.205,
+            "normal_min": -600.0,
+            "normal_max": -100.0,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "MFCC-1 Mean (Loudness) is within the normal range for human speech (-600.0\u2013-100.0)."
+          },
+          {
+            "name": "mfcc_delta_energy",
+            "label": "MFCC Temporal Dynamics",
+            "value": 4.9171,
+            "normal_min": 0.5,
+            "normal_max": 25.0,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "MFCC Temporal Dynamics is within the normal range for human speech (0.5\u201325.0)."
+          },
+          {
+            "name": "spectral_centroid_norm",
+            "label": "Spectral Centroid",
+            "value": 0.0713,
+            "normal_min": 0.05,
+            "normal_max": 0.4,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "Spectral Centroid is within the normal range for human speech (0.05\u20130.4)."
+          }
+        ]
+      }
+    },
+    {
+      "filename": "synthetic_01_deepfake_vocoder_glitch.wav",
+      "duration_sec": 3.0,
+      "windows_count": 3,
+      "ground_truth": "DEEPFAKE",
+      "ground_truth_label": 1,
+      "predicted_verdict": "UNCERTAIN",
+      "fake_probability": 0.4883,
+      "confidence": 0.5,
+      "outcome": "UNCERTAIN_FAKE",
+      "is_correct": false,
+      "latency_ms": 61.4,
+      "top_reason": "The overall loudness profile (MFCC-1) is outside the typical range for real speech, which may indicate synthetic amplitude normalization.",
+      "explanation": {
+        "verdict": "UNCERTAIN",
+        "confidence": 0.5,
+        "fake_probability": 0.4883,
+        "summary": "The model cannot confidently classify this audio (fake_prob=0.49). 2 suspicious feature(s) detected \u2014 manual review recommended.",
+        "top_reason": "The overall loudness profile (MFCC-1) is outside the typical range for real speech, which may indicate synthetic amplitude normalization.",
+        "mode": "demo",
+        "indicators": [
+          {
+            "name": "mfcc1_mean",
+            "label": "MFCC-1 Mean (Loudness)",
+            "value": -76.4546,
+            "normal_min": -600.0,
+            "normal_max": -100.0,
+            "is_suspicious": true,
+            "direction": "unusually high",
+            "suspicion_weight": 0.047,
+            "plain_english": "The overall loudness profile (MFCC-1) is outside the typical range for real speech, which may indicate synthetic amplitude normalization."
+          },
+          {
+            "name": "temporal_variance",
+            "label": "Temporal Energy Variance",
+            "value": 0.0155,
+            "normal_min": 40.0,
+            "normal_max": 900.0,
+            "is_suspicious": true,
+            "direction": "unusually low",
+            "suspicion_weight": 0.046,
+            "plain_english": "Energy barely varies over time \u2014 natural speech has dynamic loudness changes from phoneme transitions, but this audio is unnaturally smooth, a hallmark of voice cloning systems."
+          },
+          {
+            "name": "spectral_flatness",
+            "label": "Spectral Flatness",
+            "value": 0.0044,
+            "normal_min": 0.002,
+            "normal_max": 0.18,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "Spectral Flatness is within the normal range for human speech (0.002\u20130.18)."
+          },
+          {
+            "name": "hf_energy_ratio",
+            "label": "High-Frequency Energy Ratio",
+            "value": 0.011,
+            "normal_min": 0.0,
+            "normal_max": 0.12,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "High-Frequency Energy Ratio is within the normal range for human speech (0.0\u20130.12)."
+          },
+          {
+            "name": "mfcc_delta_energy",
+            "label": "MFCC Temporal Dynamics",
+            "value": 2.096,
+            "normal_min": 0.5,
+            "normal_max": 25.0,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "MFCC Temporal Dynamics is within the normal range for human speech (0.5\u201325.0)."
+          },
+          {
+            "name": "spectral_centroid_norm",
+            "label": "Spectral Centroid",
+            "value": 0.0631,
+            "normal_min": 0.05,
+            "normal_max": 0.4,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "Spectral Centroid is within the normal range for human speech (0.05\u20130.4)."
+          },
+          {
+            "name": "zero_crossing_rate",
+            "label": "Zero Crossing Rate",
+            "value": 0.0323,
+            "normal_min": 0.01,
+            "normal_max": 0.2,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "Zero Crossing Rate is within the normal range for human speech (0.01\u20130.2)."
+          }
+        ]
+      }
+    },
+    {
+      "filename": "synthetic_02_deepfake_neural_tts.wav",
+      "duration_sec": 3.0,
+      "windows_count": 3,
+      "ground_truth": "DEEPFAKE",
+      "ground_truth_label": 1,
+      "predicted_verdict": "UNCERTAIN",
+      "fake_probability": 0.5427,
+      "confidence": 0.5,
+      "outcome": "UNCERTAIN_FAKE",
+      "is_correct": false,
+      "latency_ms": 56.9,
+      "top_reason": "The zero-crossing rate is abnormally high, suggesting the presence of synthetic noise or vocoder artifacts between phoneme boundaries.",
+      "explanation": {
+        "verdict": "UNCERTAIN",
+        "confidence": 0.5,
+        "fake_probability": 0.5427,
+        "summary": "The model cannot confidently classify this audio (fake_prob=0.54). 2 suspicious feature(s) detected \u2014 manual review recommended.",
+        "top_reason": "The zero-crossing rate is abnormally high, suggesting the presence of synthetic noise or vocoder artifacts between phoneme boundaries.",
+        "mode": "demo",
+        "indicators": [
+          {
+            "name": "zero_crossing_rate",
+            "label": "Zero Crossing Rate",
+            "value": 0.2581,
+            "normal_min": 0.01,
+            "normal_max": 0.2,
+            "is_suspicious": true,
+            "direction": "unusually high",
+            "suspicion_weight": 0.306,
+            "plain_english": "The zero-crossing rate is abnormally high, suggesting the presence of synthetic noise or vocoder artifacts between phoneme boundaries."
+          },
+          {
+            "name": "temporal_variance",
+            "label": "Temporal Energy Variance",
+            "value": 0.6642,
+            "normal_min": 40.0,
+            "normal_max": 900.0,
+            "is_suspicious": true,
+            "direction": "unusually low",
+            "suspicion_weight": 0.046,
+            "plain_english": "Energy barely varies over time \u2014 natural speech has dynamic loudness changes from phoneme transitions, but this audio is unnaturally smooth, a hallmark of voice cloning systems."
+          },
+          {
+            "name": "spectral_flatness",
+            "label": "Spectral Flatness",
+            "value": 0.0003,
+            "normal_min": 0.002,
+            "normal_max": 0.18,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "Spectral Flatness is within the normal range for human speech (0.002\u20130.18)."
+          },
+          {
+            "name": "hf_energy_ratio",
+            "label": "High-Frequency Energy Ratio",
+            "value": 0.0583,
+            "normal_min": 0.0,
+            "normal_max": 0.12,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "High-Frequency Energy Ratio is within the normal range for human speech (0.0\u20130.12)."
+          },
+          {
+            "name": "mfcc1_mean",
+            "label": "MFCC-1 Mean (Loudness)",
+            "value": -387.4251,
+            "normal_min": -600.0,
+            "normal_max": -100.0,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "MFCC-1 Mean (Loudness) is within the normal range for human speech (-600.0\u2013-100.0)."
+          },
+          {
+            "name": "mfcc_delta_energy",
+            "label": "MFCC Temporal Dynamics",
+            "value": 3.4075,
+            "normal_min": 0.5,
+            "normal_max": 25.0,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "MFCC Temporal Dynamics is within the normal range for human speech (0.5\u201325.0)."
+          },
+          {
+            "name": "spectral_centroid_norm",
+            "label": "Spectral Centroid",
+            "value": 0.1967,
+            "normal_min": 0.05,
+            "normal_max": 0.4,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "Spectral Centroid is within the normal range for human speech (0.05\u20130.4)."
+          }
+        ]
+      }
+    },
+    {
+      "filename": "synthetic_03_deepfake_cloned_voice.wav",
+      "duration_sec": 2.8,
+      "windows_count": 2,
+      "ground_truth": "DEEPFAKE",
+      "ground_truth_label": 1,
+      "predicted_verdict": "UNCERTAIN",
+      "fake_probability": 0.4766,
+      "confidence": 0.5,
+      "outcome": "UNCERTAIN_FAKE",
+      "is_correct": false,
+      "latency_ms": 37.0,
+      "top_reason": "Energy barely varies over time \u2014 natural speech has dynamic loudness changes from phoneme transitions, but this audio is unnaturally smooth, a hallmark of voice cloning systems.",
+      "explanation": {
+        "verdict": "UNCERTAIN",
+        "confidence": 0.5,
+        "fake_probability": 0.4766,
+        "summary": "The model cannot confidently classify this audio (fake_prob=0.48). 1 suspicious feature(s) detected \u2014 manual review recommended.",
+        "top_reason": "Energy barely varies over time \u2014 natural speech has dynamic loudness changes from phoneme transitions, but this audio is unnaturally smooth, a hallmark of voice cloning systems.",
+        "mode": "demo",
+        "indicators": [
+          {
+            "name": "temporal_variance",
+            "label": "Temporal Energy Variance",
+            "value": 0.3358,
+            "normal_min": 40.0,
+            "normal_max": 900.0,
+            "is_suspicious": true,
+            "direction": "unusually low",
+            "suspicion_weight": 0.046,
+            "plain_english": "Energy barely varies over time \u2014 natural speech has dynamic loudness changes from phoneme transitions, but this audio is unnaturally smooth, a hallmark of voice cloning systems."
+          },
+          {
+            "name": "spectral_flatness",
+            "label": "Spectral Flatness",
+            "value": 0.0839,
+            "normal_min": 0.002,
+            "normal_max": 0.18,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "Spectral Flatness is within the normal range for human speech (0.002\u20130.18)."
+          },
+          {
+            "name": "hf_energy_ratio",
+            "label": "High-Frequency Energy Ratio",
+            "value": 0.011,
+            "normal_min": 0.0,
+            "normal_max": 0.12,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "High-Frequency Energy Ratio is within the normal range for human speech (0.0\u20130.12)."
+          },
+          {
+            "name": "mfcc1_mean",
+            "label": "MFCC-1 Mean (Loudness)",
+            "value": -108.7022,
+            "normal_min": -600.0,
+            "normal_max": -100.0,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "MFCC-1 Mean (Loudness) is within the normal range for human speech (-600.0\u2013-100.0)."
+          },
+          {
+            "name": "mfcc_delta_energy",
+            "label": "MFCC Temporal Dynamics",
+            "value": 2.6448,
+            "normal_min": 0.5,
+            "normal_max": 25.0,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "MFCC Temporal Dynamics is within the normal range for human speech (0.5\u201325.0)."
+          },
+          {
+            "name": "spectral_centroid_norm",
+            "label": "Spectral Centroid",
+            "value": 0.0973,
+            "normal_min": 0.05,
+            "normal_max": 0.4,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "Spectral Centroid is within the normal range for human speech (0.05\u20130.4)."
+          },
+          {
+            "name": "zero_crossing_rate",
+            "label": "Zero Crossing Rate",
+            "value": 0.0323,
+            "normal_min": 0.01,
+            "normal_max": 0.2,
+            "is_suspicious": false,
+            "direction": "normal",
+            "suspicion_weight": 0.0,
+            "plain_english": "Zero Crossing Rate is within the normal range for human speech (0.01\u20130.2)."
+          }
+        ]
+      }
+    }
+  ]
+}

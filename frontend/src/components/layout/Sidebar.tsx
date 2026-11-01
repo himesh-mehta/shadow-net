@@ -12,6 +12,7 @@ import {
   Radio,
   FileCheck2,
   Lock,
+  BarChart3,
 } from "lucide-react";
 
 export function Sidebar() {
@@ -47,6 +48,12 @@ export function Sidebar() {
       name: "Prototype MFA",
       href: "/verify",
       icon: FileCheck2,
+      adminOnly: false,
+    },
+    {
+      name: "Model Evaluation",
+      href: "/evaluation",
+      icon: BarChart3,
       adminOnly: false,
     },
     {

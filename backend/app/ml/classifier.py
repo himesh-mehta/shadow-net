@@ -1,124 +1,209 @@
 """
-ResNet-18 Audio Classifier for SHADOW-NET.
-Adapts torchvision ResNet-18 for 1-channel log Mel-Spectrogram input
-and binary classification (Real vs. Deepfake).
+Production and Baseline Audio Classifiers for SHADOW-NET.
+Adheres to the model artifact specification:
+- Loads config and state from models/<model_name>/<version>/metadata.json
+- Emits standardized detection outputs with explicit model_status and is_heuristic_placeholder flags
 """
 
 import os
 import logging
+from pathlib import Path
 from typing import Dict, Any, Optional
 import numpy as np
 
 from app.ml.base import DetectorInterface
+from app.ml.metadata import ModelMetadata, load_model_metadata
 
 logger = logging.getLogger("shadow_net.ml.classifier")
 
 
-class ResNet18AudioClassifier(DetectorInterface):
+class StandardizedAudioDetector(DetectorInterface):
     """
-    Production deepfake voice classifier using an adapted ResNet-18 architecture.
-    Accepts 1-channel log-Mel-spectrogram inputs (1, 128, T) and predicts binary classes.
+    Standardized detector interface supporting both trained ML inference
+    and transparent untrained/experimental skeleton modes.
     """
 
-    def __init__(self, model_path: Optional[str] = None):
+    def __init__(
+        self,
+        metadata: Optional[ModelMetadata] = None,
+        weights_dir: Optional[Path] = None,
+        model_path: Optional[str] = None,
+    ):
+        self.metadata = metadata or load_model_metadata()
+        self.weights_dir = weights_dir
         self.model_path = model_path
         self._model = None
         self._device = None
-        self._is_loaded = False
         self._torch = None
-        self._init_architecture()
+        self._is_loaded = False
 
-    def _init_architecture(self):
+        self._init_backend()
+
+    def _init_backend(self):
+        """Attempts to load PyTorch model and weights if available."""
         try:
             import torch
             import torch.nn as nn
-            import torchvision.models as models
 
             self._torch = torch
             self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-            # Build ResNet-18 backbone
-            net = models.resnet18(weights=None)
+            arch = getattr(self.metadata, "architecture", "lcnn_spectrogram")
+            if "lcnn" in arch.lower() and not self.model_path:
+                from app.ml.architectures.lcnn import LCNNAudioDetector
+                net = LCNNAudioDetector(num_classes=2)
+            else:
+                import torchvision.models as models
+                net = models.resnet18(weights=None)
+                net.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+                net.fc = nn.Linear(net.fc.in_features, 2)
 
-            # Adapt first conv layer: change in_channels from 3 (RGB) to 1 (Spectrogram)
-            net.conv1 = nn.Conv2d(
-                in_channels=1,
-                out_channels=64,
-                kernel_size=7,
-                stride=2,
-                padding=3,
-                bias=False,
-            )
-
-            # Adapt final linear layer: 2 output classes (Index 0: Real, Index 1: Deepfake)
-            num_features = net.fc.in_features
-            net.fc = nn.Linear(num_features, 2)
-
-            # Load checkpoint weights if file exists
+            # Check if weights file exists and is trained
+            weights_path = None
             if self.model_path and os.path.isfile(self.model_path):
-                logger.info(f"Loading trained model weights from: {self.model_path}")
-                checkpoint = torch.load(self.model_path, map_location=self._device)
-                # Support checkpoint saved as state_dict or wrapped dict
+                weights_path = Path(self.model_path)
+            elif self.weights_dir:
+                candidate = self.weights_dir / (self.metadata.weights_file or "model.pt")
+                if candidate.is_file():
+                    weights_path = candidate
+
+            if weights_path:
+                logger.info(f"Loading weights from {weights_path}")
+                checkpoint = torch.load(weights_path, map_location=self._device)
                 state_dict = checkpoint.get("state_dict", checkpoint) if isinstance(checkpoint, dict) else checkpoint
                 net.load_state_dict(state_dict)
                 self._is_loaded = True
-                logger.info("ResNet-18 model weights loaded successfully.")
+                self.metadata.is_trained = True
+                self.metadata.status = "TRAINED"
+                logger.info(f"Model successfully loaded trained weights from {weights_path}.")
             else:
-                logger.warning(f"No checkpoint found at '{self.model_path}'. Model has randomly initialized weights.")
+                # Untrained skeleton mode
                 self._is_loaded = False
+                logger.info(
+                    f"Model '{self.metadata.model_name}:{self.metadata.model_version}' initialized in "
+                    f"UNTRAINED/EXPERIMENTAL mode (status={self.metadata.status})."
+                )
 
             net.to(self._device)
             net.eval()
             self._model = net
 
         except Exception as e:
-            logger.error(f"Failed to initialize ResNet-18 classifier: {e}")
+            logger.warning(f"Could not load PyTorch model backend: {e}. Operating in heuristic placeholder mode.")
             self._model = None
             self._is_loaded = False
 
     @property
     def name(self) -> str:
-        return "ResNet18AudioClassifier (1-Channel Spectrogram)"
+        if self._is_loaded and self.is_trained:
+            return "ResNet18AudioClassifier (1-Channel Spectrogram)"
+        return self.metadata.model_name
+
+    @property
+    def version(self) -> str:
+        return self.metadata.model_version
 
     @property
     def mode(self) -> str:
-        return "ml" if self._is_loaded else "demo"
+        return "ml" if (self._is_loaded and self.metadata.is_trained) else "demo"
 
     @property
     def is_loaded(self) -> bool:
         return self._is_loaded
 
-    def predict_window(self, mel_spectrogram: np.ndarray) -> Dict[str, Any]:
+    @property
+    def is_trained(self) -> bool:
+        return self.metadata.is_trained and self._is_loaded
+
+    @property
+    def model_status(self) -> str:
+        return "TRAINED" if self.is_trained else "NOT_TRAINED"
+
+    @property
+    def is_heuristic_placeholder(self) -> bool:
+        return not self.is_trained
+
+    def predict_window(
+        self,
+        mel_spectrogram: np.ndarray,
+        window_start: float = 0.0,
+        window_end: float = 2.0,
+    ) -> Dict[str, Any]:
         """
-        Infers real vs deepfake probabilities from a 2D Mel-spectrogram array.
-        Shape expected: (n_mels, time_frames), e.g. (128, 63).
+        Runs inference on a single audio window's log-Mel-spectrogram.
+        Returns the standardized schema:
+        - ai_probability
+        - real_probability
+        - verdict ("REAL" | "AI_SUSPECTED" | "UNCERTAIN")
+        - model_name
+        - model_version
+        - model_status ("NOT_TRAINED" | "TRAINED")
+        - is_heuristic_placeholder (bool)
+        - window_start
+        - window_end
         """
-        if self._model is None or self._torch is None:
-            raise RuntimeError("ResNet-18 model is not initialized.")
+        # If model is genuinely trained, run neural network
+        if self.is_trained and self._model is not None and self._torch is not None:
+            torch = self._torch
+            mel_array = mel_spectrogram.astype(np.float32)
+            tensor = torch.from_numpy(mel_array).unsqueeze(0).unsqueeze(0).to(self._device)
 
-        torch = self._torch
+            with torch.no_grad():
+                logits = self._model(tensor)
+                probs = torch.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
 
-        # Ensure 4D tensor: (batch_size=1, channels=1, n_mels=128, time_frames=T)
-        mel_array = mel_spectrogram.astype(np.float32)
-        tensor = torch.from_numpy(mel_array).unsqueeze(0).unsqueeze(0).to(self._device)
+            real_prob = float(probs[0])
+            ai_prob = float(probs[1])
+        else:
+            # UNTRAINED MODEL: Compute acoustic spectral heuristic placeholder
+            # NEVER fake high certainty or present this as trained ML output
+            if mel_spectrogram.size == 0:
+                ai_prob = 0.50
+                real_prob = 0.50
+            else:
+                # Spectral roll-off & high frequency energy variance proxy
+                spec_std = float(np.std(mel_spectrogram))
+                spec_mean = float(np.mean(mel_spectrogram))
+                # Normalized heuristic centered around 0.50 with mild variation
+                heuristic = 0.50 + 0.10 * np.tanh((spec_std - 15.0) / 10.0)
+                ai_prob = float(np.clip(heuristic, 0.30, 0.70))
+                real_prob = float(1.0 - ai_prob)
 
-        with torch.no_grad():
-            logits = self._model(tensor)
-            probs = torch.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+        real_th = self.metadata.decision_thresholds.real_threshold
+        ai_th = self.metadata.decision_thresholds.ai_suspected_threshold
 
-        real_prob = float(probs[0])
-        fake_prob = float(probs[1])
+        # Standardized 3-way verdict
+        if ai_prob >= ai_th:
+            verdict = "AI_SUSPECTED"
+            confidence = ai_prob
+        elif ai_prob < real_th:
+            verdict = "REAL"
+            confidence = real_prob
+        else:
+            verdict = "UNCERTAIN"
+            confidence = 0.50
 
-        raw_label = "DEEPFAKE" if fake_prob >= 0.50 else "REAL"
-        raw_conf = fake_prob if raw_label == "DEEPFAKE" else real_prob
+        raw_label = "DEEPFAKE" if ai_prob >= 0.50 else "REAL"
 
         return {
-            "fake_probability": round(fake_prob, 4),
+            "ai_probability": round(ai_prob, 4),
             "real_probability": round(real_prob, 4),
-            "raw_label": raw_label,
-            "confidence": round(raw_conf, 4),
-            "raw_scores": [round(real_prob, 4), round(fake_prob, 4)],
-            "mode": self.mode,
+            "verdict": verdict,
             "model_name": self.name,
-            "is_synthetic": not self._is_loaded,
+            "model_version": self.version,
+            "model_status": self.model_status,
+            "is_heuristic_placeholder": self.is_heuristic_placeholder,
+            "window_start": round(window_start, 2),
+            "window_end": round(window_end, 2),
+            # Backward compatibility fields
+            "fake_probability": round(ai_prob, 4),
+            "confidence": round(confidence, 4),
+            "raw_label": raw_label,
+            "raw_scores": [round(real_prob, 4), round(ai_prob, 4)],
+            "mode": self.mode,
+            "is_synthetic": self.is_heuristic_placeholder,
         }
+
+
+# Maintain backward-compatible alias
+ResNet18AudioClassifier = StandardizedAudioDetector

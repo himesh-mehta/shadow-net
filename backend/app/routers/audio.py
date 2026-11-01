@@ -11,10 +11,12 @@ Executes:
 """
 
 import time
+import json
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, AsyncGenerator
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body, status
+from fastapi.responses import StreamingResponse
 
 from app.db import get_db
 from app.config import get_settings
@@ -23,6 +25,7 @@ from app.audio.vad import get_vad
 from app.audio.features import slice_into_windows, extract_all_features
 from app.ml.factory import get_detector
 from app.ml.decision import DecisionEngine
+from app.ml.explainer import explain_verdict
 from app.models.incident import PredictionType, ThreatLevel, ResponseAction
 
 logger = logging.getLogger("shadow_net.routers.audio")
@@ -43,8 +46,13 @@ class WindowInferenceSummary(BaseModel):
     start_sec: float
     end_sec: float
     fake_probability: float
+    ai_probability: float = 0.50
+    real_probability: float = 0.50
     prediction: PredictionType
+    verdict: str = "UNCERTAIN"
     threat_level: ThreatLevel
+    speaker_id: str = "Speaker 1"
+    is_sustained_threat: bool = False
     is_padded: bool
     mel_shape: List[int]
     mfcc_shape: List[int]
@@ -56,9 +64,15 @@ class AudioAnalysisResponse(BaseModel):
     session_id: Optional[str] = None
     mode: str = Field(..., description="'demo' (synthetic fallback) or 'ml' (production ResNet-18 inference)")
     model_name: str
+    model_version: str = "v1"
+    model_status: str = "NOT_TRAINED"
+    is_heuristic_placeholder: bool = True
+    display_verdict: str = "UNCERTAIN (MODEL NOT TRAINED)"
     is_synthetic: bool
     prediction: PredictionType
     confidence: float
+    ai_probability: float = 0.50
+    real_probability: float = 0.50
     threat_level: ThreatLevel
     response_action: ResponseAction
     detection_latency_ms: float
@@ -69,7 +83,12 @@ class AudioAnalysisResponse(BaseModel):
     vad_engine: str
     num_windows: int
     deepfake_window_count: int
+    sustained_threat_detected: bool = False
     windows: List[WindowInferenceSummary]
+    explanation: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Human-readable 'why' explanation: acoustic feature signals and plain-English reasoning",
+    )
 
 
 async def _process_audio_pipeline(
@@ -88,6 +107,13 @@ async def _process_audio_pipeline(
     configured_window = window_length or settings.AUDIO_WINDOW_SECONDS
     configured_vad = vad_sensitivity if vad_sensitivity is not None else settings.VAD_SENSITIVITY
     configured_threshold = detection_threshold or settings.DETECTION_THRESHOLD
+    # Phase 1: two-threshold verdict scheme
+    configured_real_th = settings.REAL_THRESHOLD
+    configured_deepfake_th = settings.DEEPFAKE_THRESHOLD
+    # If operator passed a legacy single threshold via API, derive symmetric bands from it
+    if detection_threshold is not None:
+        configured_real_th = round(1.0 - detection_threshold, 4)
+        configured_deepfake_th = detection_threshold
 
     if db is not None:
         db_settings = await db.settings.find_one({"scope": "global"})
@@ -134,26 +160,44 @@ async def _process_audio_pipeline(
 
     # 4. Feature Extraction & Model Inference per window
     detector = get_detector()
-    decision_engine = DecisionEngine(default_threshold=configured_threshold)
+    decision_engine = DecisionEngine(
+        real_threshold=configured_real_th,
+        deepfake_threshold=configured_deepfake_th,
+    )
 
     window_summaries: List[WindowInferenceSummary] = []
     window_predictions_for_agg = []
+    sustained_counter = 0
 
     for w in windows:
         feats = extract_all_features(w["audio"], sr=sr)
         mel_spectrogram = feats["mel_spectrogram"]
 
-        # Run inference through active detector (ResNet-18 or Demo fallback)
-        pred_result = detector.predict_window(mel_spectrogram)
-        fake_prob = pred_result["fake_probability"]
+        # Run inference through active detector
+        pred_result = detector.predict_window(
+            mel_spectrogram,
+            window_start=w["start_sec"],
+            window_end=w["end_sec"],
+        )
+        fake_prob = pred_result.get("ai_probability", pred_result["fake_probability"])
+        real_prob = pred_result.get("real_probability", 1.0 - fake_prob)
 
         # Evaluate window with Decision Engine
         win_pred, win_threat, win_conf = decision_engine.evaluate_window(
             fake_prob, threshold=configured_threshold
         )
 
+        if fake_prob >= configured_deepfake_th:
+            sustained_counter += 1
+        else:
+            sustained_counter = 0
+
+        is_sustained = (sustained_counter >= 2)
+
         window_predictions_for_agg.append({
             "fake_probability": fake_prob,
+            "ai_probability": fake_prob,
+            "real_probability": real_prob,
             "prediction": win_pred,
             "threat_level": win_threat,
             "confidence": win_conf,
@@ -165,8 +209,13 @@ async def _process_audio_pipeline(
                 start_sec=w["start_sec"],
                 end_sec=w["end_sec"],
                 fake_probability=fake_prob,
+                ai_probability=fake_prob,
+                real_probability=real_prob,
                 prediction=win_pred,
+                verdict=win_pred.value,
                 threat_level=win_threat,
+                speaker_id="Speaker 1",
+                is_sustained_threat=is_sustained,
                 is_padded=w["is_padded"],
                 mel_shape=feats["mel_shape"],
                 mfcc_shape=feats["mfcc_shape"],
@@ -175,13 +224,68 @@ async def _process_audio_pipeline(
         )
 
     # 5. Overall Session Decision & Risk Evaluation
+    model_status = getattr(detector, "model_status", "NOT_TRAINED")
     session_verdict = decision_engine.evaluate_session(
-        window_predictions_for_agg, threshold=configured_threshold
+        window_predictions_for_agg,
+        threshold=configured_threshold,
+        model_status=model_status,
     )
 
     elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
-    # 6. Automated Incident Response if session_id is provided and deepfake detected
+    # 6. Generate human-readable explanation from the best window features
+    best_window_feats = None
+    best_window_mfcc = None
+    if window_predictions_for_agg:
+        agg_prob = session_verdict["average_fake_prob"]
+        best_idx = min(
+            range(len(window_predictions_for_agg)),
+            key=lambda i: abs(window_predictions_for_agg[i]["fake_probability"] - agg_prob),
+        )
+        try:
+            rep_window = windows[best_idx]
+            rep_feats = extract_all_features(rep_window["audio"], sr=sr)
+            best_window_feats = rep_feats["mel_spectrogram"]
+            best_window_mfcc = rep_feats["mfcc"]
+        except Exception:
+            pass
+
+    import numpy as _np
+    explanation = explain_verdict(
+        mel_spectrogram=best_window_feats if best_window_feats is not None else _np.zeros((128, 1), dtype="float32"),
+        mfcc=best_window_mfcc if best_window_mfcc is not None else _np.zeros((20, 1), dtype="float32"),
+        fake_probability=session_verdict["average_fake_prob"],
+        verdict=session_verdict["prediction"].value,
+        confidence=session_verdict["confidence"],
+        mode=detector.mode,
+    ).to_dict()
+
+    # 7. Persist analysis timeline event (lightweight, no raw audio)
+    if session_id and db is not None:
+        import uuid as _uuid
+        timeline_event = {
+            "event_id": str(_uuid.uuid4()),
+            "session_id": session_id,
+            "timestamp": __import__("datetime").datetime.utcnow(),
+            "prediction": session_verdict["prediction"].value,
+            "confidence": session_verdict["confidence"],
+            "fake_probability": session_verdict["average_fake_prob"],
+            "threat_level": session_verdict["threat_level"].value,
+            "response_action": session_verdict["response_action"].value,
+            "detection_latency_ms": elapsed_ms,
+            "num_windows": len(window_summaries),
+            "deepfake_window_count": session_verdict["deepfake_window_count"],
+            "sustained_threat_detected": session_verdict.get("sustained_threat_detected", False),
+            "top_reason": explanation.get("top_reason"),
+            "mode": detector.mode,
+            "model_status": model_status,
+        }
+        try:
+            await db.analysis_timeline.insert_one(timeline_event)
+        except Exception as _e:
+            logger.warning(f"Failed to persist timeline event: {_e}")
+
+    # 8. Automated Incident Response if session_id is provided and deepfake detected
     if session_id and session_verdict["prediction"] == PredictionType.DEEPFAKE:
         from app.services.incident_service import handle_detection_trigger
         await handle_detection_trigger(
@@ -200,9 +304,15 @@ async def _process_audio_pipeline(
         session_id=session_id,
         mode=detector.mode,
         model_name=detector.name,
-        is_synthetic=(detector.mode == "demo"),
+        model_version=getattr(detector, "version", "v1"),
+        model_status=model_status,
+        is_heuristic_placeholder=getattr(detector, "is_heuristic_placeholder", True),
+        display_verdict=session_verdict.get("display_verdict", "UNCERTAIN (MODEL NOT TRAINED)"),
+        is_synthetic=getattr(detector, "is_heuristic_placeholder", True),
         prediction=session_verdict["prediction"],
         confidence=session_verdict["confidence"],
+        ai_probability=session_verdict["average_fake_prob"],
+        real_probability=session_verdict.get("real_probability", round(1.0 - session_verdict["average_fake_prob"], 4)),
         threat_level=session_verdict["threat_level"],
         response_action=session_verdict["response_action"],
         detection_latency_ms=elapsed_ms,
@@ -213,7 +323,9 @@ async def _process_audio_pipeline(
         vad_engine=vad_meta.get("vad_engine", "VAD"),
         num_windows=len(window_summaries),
         deepfake_window_count=session_verdict["deepfake_window_count"],
+        sustained_threat_detected=session_verdict.get("sustained_threat_detected", False),
         windows=window_summaries,
+        explanation=explanation,
     )
 
 
@@ -269,4 +381,277 @@ async def analyze_audio_json(
         vad_sensitivity=payload.vad_sensitivity,
         detection_threshold=payload.detection_threshold,
         db=db,
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SSE Streaming Endpoint — emits one event per window, then a final verdict
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def _stream_audio_pipeline(
+    audio_bytes: bytes,
+    session_id: Optional[str] = None,
+    window_length: Optional[float] = None,
+    vad_sensitivity: Optional[int] = None,
+    detection_threshold: Optional[float] = None,
+    db=None,
+) -> AsyncGenerator[str, None]:
+    """
+    Core SSE generator: preprocesses audio, runs VAD, slices into windows,
+    and yields a Server-Sent Event JSON string per window as inference completes.
+    Final event carries the full session verdict and explanation.
+
+    SSE format (each yield):  data: <json>\n\n
+    Event types:
+      - 'pipeline_start'   : meta + total window count
+      - 'window'           : per-segment result with start_sec, end_sec, prediction
+      - 'session_verdict'  : aggregated result + explanation
+      - 'error'            : exception message
+    """
+    import numpy as _np
+    import uuid as _uuid
+    import datetime as _dt
+
+    def sse(event_type: str, payload: dict) -> str:
+        payload["type"] = event_type
+        return f"data: {json.dumps(payload)}\n\n"
+
+    settings = get_settings()
+    configured_window = window_length or settings.AUDIO_WINDOW_SECONDS
+    configured_vad = vad_sensitivity if vad_sensitivity is not None else settings.VAD_SENSITIVITY
+    configured_real_th = settings.REAL_THRESHOLD
+    configured_deepfake_th = settings.DEEPFAKE_THRESHOLD
+    configured_threshold = detection_threshold or settings.DETECTION_THRESHOLD
+
+    if detection_threshold is not None:
+        configured_real_th = round(1.0 - detection_threshold, 4)
+        configured_deepfake_th = detection_threshold
+
+    if db is not None:
+        db_settings = await db.settings.find_one({"scope": "global"})
+        if db_settings:
+            configured_window = db_settings.get("audio_window_length", configured_window)
+            configured_vad = db_settings.get("vad_sensitivity", configured_vad)
+
+    # ── Preprocess ────────────────────────────────────────────────────────────
+    try:
+        audio, sr = load_audio(audio_bytes, target_sr=16000)
+    except Exception as e:
+        yield sse("error", {"message": f"Audio decode failed: {e}"})
+        return
+
+    if audio.size == 0:
+        yield sse("error", {"message": "No decodable audio data found in the file."})
+        return
+
+    # ── VAD ───────────────────────────────────────────────────────────────────
+    vad = get_vad()
+    speech_audio, intervals, vad_meta = vad.filter_speech(audio, sr=sr, sensitivity=configured_vad)
+    active_audio = speech_audio if speech_audio.size > 0 else audio
+
+    # ── Window slicing ────────────────────────────────────────────────────────
+    windows = slice_into_windows(
+        active_audio, sr=sr,
+        window_sec=configured_window,
+        hop_sec=configured_window * 0.5,
+    )
+
+    if not windows:
+        yield sse("error", {"message": "No audio windows could be extracted (audio too short?)"})
+        return
+
+    detector = get_detector()
+    decision_engine = DecisionEngine(
+        real_threshold=configured_real_th,
+        deepfake_threshold=configured_deepfake_th,
+    )
+
+    total_duration = vad_meta.get("original_duration", 0.0)
+
+    # ── Emit pipeline start ───────────────────────────────────────────────────
+    model_status = getattr(detector, "model_status", "NOT_TRAINED")
+    yield sse("pipeline_start", {
+        "total_windows": len(windows),
+        "window_sec": configured_window,
+        "original_duration_sec": total_duration,
+        "speech_duration_sec": vad_meta.get("speech_duration", 0.0),
+        "sample_rate": sr,
+        "mode": detector.mode,
+        "model_name": detector.name,
+        "model_version": getattr(detector, "version", "v1"),
+        "model_status": model_status,
+        "is_heuristic_placeholder": getattr(detector, "is_heuristic_placeholder", True),
+        "session_id": session_id,
+    })
+
+    # ── Per-window inference ──────────────────────────────────────────────────
+    window_predictions_for_agg = []
+    start_t = time.perf_counter()
+    rep_feats_mel = None
+    rep_feats_mfcc = None
+    sustained_counter = 0
+
+    for w in windows:
+        feats = extract_all_features(w["audio"], sr=sr)
+        pred_result = detector.predict_window(
+            feats["mel_spectrogram"],
+            window_start=w["start_sec"],
+            window_end=w["end_sec"],
+        )
+        fake_prob = pred_result.get("ai_probability", pred_result["fake_probability"])
+        real_prob = pred_result.get("real_probability", 1.0 - fake_prob)
+
+        win_pred, win_threat, win_conf = decision_engine.evaluate_window(fake_prob)
+
+        if fake_prob >= configured_deepfake_th:
+            sustained_counter += 1
+        else:
+            sustained_counter = 0
+
+        is_sustained = (sustained_counter >= 2)
+
+        window_predictions_for_agg.append({
+            "fake_probability": fake_prob,
+            "ai_probability": fake_prob,
+            "real_probability": real_prob,
+        })
+
+        # Keep the window closest to 50% fake_prob for explanation later
+        if rep_feats_mel is None or abs(fake_prob - 0.5) < abs(
+            float(_np.mean(rep_feats_mel)) - 0.5
+        ):
+            rep_feats_mel = feats["mel_spectrogram"]
+            rep_feats_mfcc = feats["mfcc"]
+
+        window_event = {
+            "window_index": w["window_index"],
+            "start_sec": w["start_sec"],
+            "end_sec": w["end_sec"],
+            "fake_probability": round(fake_prob, 4),
+            "ai_probability": round(fake_prob, 4),
+            "real_probability": round(real_prob, 4),
+            "prediction": win_pred.value,
+            "verdict": win_pred.value,
+            "threat_level": win_threat.value,
+            "confidence": round(win_conf, 4),
+            "speaker_id": "Speaker 1",
+            "is_sustained_threat": is_sustained,
+            "is_padded": w["is_padded"],
+            "visual_matrix": feats["visual_matrix"],
+        }
+        yield sse("window", window_event)
+
+    elapsed_ms = round((time.perf_counter() - start_t) * 1000, 2)
+
+    # ── Session verdict ───────────────────────────────────────────────────────
+    session_verdict = decision_engine.evaluate_session(
+        window_predictions_for_agg,
+        model_status=model_status,
+    )
+
+    explanation = explain_verdict(
+        mel_spectrogram=rep_feats_mel if rep_feats_mel is not None else _np.zeros((128, 1), dtype="float32"),
+        mfcc=rep_feats_mfcc if rep_feats_mfcc is not None else _np.zeros((20, 1), dtype="float32"),
+        fake_probability=session_verdict["average_fake_prob"],
+        verdict=session_verdict["prediction"].value,
+        confidence=session_verdict["confidence"],
+        mode=detector.mode,
+    ).to_dict()
+
+    # Persist timeline event
+    if session_id and db is not None:
+        try:
+            await db.analysis_timeline.insert_one({
+                "event_id": str(_uuid.uuid4()),
+                "session_id": session_id,
+                "timestamp": _dt.datetime.utcnow(),
+                "prediction": session_verdict["prediction"].value,
+                "confidence": session_verdict["confidence"],
+                "fake_probability": session_verdict["average_fake_prob"],
+                "threat_level": session_verdict["threat_level"].value,
+                "response_action": session_verdict["response_action"].value,
+                "detection_latency_ms": elapsed_ms,
+                "num_windows": len(windows),
+                "deepfake_window_count": session_verdict["deepfake_window_count"],
+                "sustained_threat_detected": session_verdict.get("sustained_threat_detected", False),
+                "top_reason": explanation.get("top_reason"),
+                "mode": detector.mode,
+                "model_status": model_status,
+                "source": "stream",
+            })
+        except Exception as _e:
+            logger.warning(f"SSE timeline persist failed: {_e}")
+
+    yield sse("session_verdict", {
+        "prediction": session_verdict["prediction"].value,
+        "display_verdict": session_verdict.get("display_verdict", "UNCERTAIN (MODEL NOT TRAINED)"),
+        "confidence": session_verdict["confidence"],
+        "threat_level": session_verdict["threat_level"].value,
+        "response_action": session_verdict["response_action"].value,
+        "average_fake_prob": session_verdict["average_fake_prob"],
+        "ai_probability": session_verdict["average_fake_prob"],
+        "real_probability": session_verdict.get("real_probability", round(1.0 - session_verdict["average_fake_prob"], 4)),
+        "max_fake_prob": session_verdict["max_fake_prob"],
+        "deepfake_window_count": session_verdict["deepfake_window_count"],
+        "sustained_threat_detected": session_verdict.get("sustained_threat_detected", False),
+        "total_windows": session_verdict["total_windows"],
+        "detection_latency_ms": elapsed_ms,
+        "original_duration_sec": total_duration,
+        "speech_duration_sec": vad_meta.get("speech_duration", 0.0),
+        "dropped_silence_sec": vad_meta.get("dropped_duration", 0.0),
+        "mode": detector.mode,
+        "model_name": detector.name,
+        "model_version": getattr(detector, "version", "v1"),
+        "model_status": model_status,
+        "is_heuristic_placeholder": getattr(detector, "is_heuristic_placeholder", True),
+        "session_id": session_id,
+        "explanation": explanation,
+    })
+
+
+@router.post(
+    "/analyze/stream",
+    summary="Stream per-segment analysis via Server-Sent Events",
+    description=(
+        "Processes an audio file and streams per-window inference results as SSE events. "
+        "The client receives a 'window' event for each audio segment as it's analysed, "
+        "followed by a final 'session_verdict' event with the aggregated verdict and explanation."
+    ),
+    response_class=StreamingResponse,
+)
+async def analyze_audio_stream(
+    file: Optional[UploadFile] = File(None),
+    session_id: Optional[str] = Form(None),
+    window_length: Optional[float] = Form(None),
+    vad_sensitivity: Optional[int] = Form(None),
+    detection_threshold: Optional[float] = Form(None),
+    db=Depends(get_db),
+):
+    """
+    SSE streaming endpoint for segment-level audio analysis.
+    Returns Content-Type: text/event-stream.
+    """
+    if file is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Must provide a multipart audio 'file' for the streaming endpoint."
+        )
+
+    audio_bytes = await file.read()
+
+    return StreamingResponse(
+        _stream_audio_pipeline(
+            audio_bytes=audio_bytes,
+            session_id=session_id,
+            window_length=window_length,
+            vad_sensitivity=vad_sensitivity,
+            detection_threshold=detection_threshold,
+            db=db,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "Access-Control-Allow-Origin": "*",
+        },
     )

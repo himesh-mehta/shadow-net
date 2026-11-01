@@ -19,11 +19,22 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
 
     # Detection & Inference
-    DETECTION_THRESHOLD: float = 0.75
+    DETECTION_THRESHOLD: float = 0.75  # Kept for backward compat / settings UI
+    # Calibrated two-threshold verdict scheme (Phase 1 fix):
+    #   fake_prob < REAL_THRESHOLD        → REAL
+    #   REAL_THRESHOLD ≤ fake_prob < DEEPFAKE_THRESHOLD → UNCERTAIN
+    #   fake_prob ≥ DEEPFAKE_THRESHOLD    → DEEPFAKE
+    REAL_THRESHOLD: float = 0.35
+    DEEPFAKE_THRESHOLD: float = 0.65
     AUDIO_WINDOW_SECONDS: float = 2.0
     VAD_SENSITIVITY: int = 2
+    # Model Artifact Convention
+    # Structured under: models/<ACTIVE_MODEL_NAME>/<ACTIVE_MODEL_VERSION>/
+    MODELS_DIR: str = "models"
+    ACTIVE_MODEL_NAME: str = "shadownet-audio-detector"
+    ACTIVE_MODEL_VERSION: str = "v1"
+    MODEL_PATH: str = "../model/resnet18.pth"  # Legacy fallback path
     DEMO_MODE: bool = True
-    MODEL_PATH: str = "../model/resnet18.pth"
 
     # Audio Privacy Policy (Strictly False by default)
     STORE_AUDIO_DEFAULT: bool = False

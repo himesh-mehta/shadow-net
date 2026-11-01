@@ -45,7 +45,7 @@ async def handle_detection_trigger(
     2. Moves session status to 'restricted'
     3. Broadcasts WebSocket alert event to frontend
     """
-    if prediction != PredictionType.DEEPFAKE or db is None:
+    if prediction not in [PredictionType.DEEPFAKE, PredictionType.AI_SUSPECTED] or db is None:
         return None
 
     incident_id = str(uuid.uuid4())

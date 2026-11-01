@@ -1,0 +1,35 @@
+{
+  "model_name": "shadownet-audio-detector",
+  "model_version": "v1",
+  "architecture": "lcnn_spectrogram",
+  "is_trained": false,
+  "status": "NOT_TRAINED",
+  "description": "Baseline acoustic deepfake classifier using log-Mel spectrogram representations. Currently untrained / experimental skeleton.",
+  "training_date": null,
+  "dataset_version": null,
+  "weights_file": "model.pt",
+  "feature_config": {
+    "sample_rate": 16000,
+    "channels": 1,
+    "window_seconds": 2.0,
+    "hop_seconds": 1.0,
+    "n_mels": 128,
+    "n_fft": 1024,
+    "hop_length": 512,
+    "f_min": 20.0,
+    "f_max": 8000.0,
+    "normalized": true
+  },
+  "validation_metrics": null,
+  "decision_thresholds": {
+    "real_threshold": 0.35,
+    "ai_suspected_threshold": 0.65,
+    "calibrated": false
+  },
+  "trained_on": [],
+  "known_limitations": [
+    "Untrained baseline skeleton. Model weights are not trained on speech deepfake datasets.",
+    "Detection probabilities are heuristic placeholders and must NOT be used for security-critical decisions.",
+    "Requires training on speaker-disjoint balanced datasets (e.g., ASVspoof, WaveFake, In-The-Wild)."
+  ]
+}

@@ -23,6 +23,7 @@ from app.routers import (
     ws_router,
     verify_router,
     analytics_router,
+    evaluation_router,
 )
 
 # Configure logging
@@ -70,6 +71,7 @@ app.include_router(audio_router)
 app.include_router(ws_router)
 app.include_router(verify_router)
 app.include_router(analytics_router)
+app.include_router(evaluation_router)
 
 
 @app.get("/health", tags=["System"])

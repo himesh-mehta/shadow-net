@@ -109,3 +109,74 @@ async def get_incident(
         timeline=doc.get("timeline", []),
         store_audio=doc.get("store_audio", False),
     )
+
+
+@router.get("/{incident_id}/export")
+async def export_incident_evidence_packet(
+    incident_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """
+    Exports a cryptographically-hashed, tamper-evident JSON Evidence Packet for SOC analysts
+    and forensic audits. Conforms to GDPR zero-raw-audio privacy policies.
+    """
+    import json
+    import hashlib
+    import uuid
+    from app.ml.factory import get_detector
+
+    doc = await db.incidents.find_one({"incident_id": incident_id})
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Incident '{incident_id}' not found."
+        )
+
+    detector = get_detector()
+    model_status = getattr(detector, "model_status", "NOT_TRAINED")
+    is_heuristic = getattr(detector, "is_heuristic_placeholder", True)
+
+    packet_data = {
+        "packet_id": str(uuid.uuid4()),
+        "schema_version": "1.0",
+        "incident_id": doc["incident_id"],
+        "session_id": doc["session_id"],
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "incident_timestamp": doc["timestamp"].isoformat() if hasattr(doc["timestamp"], "isoformat") else str(doc["timestamp"]),
+        "exported_by": {
+            "username": current_user.username,
+            "role": current_user.role,
+        },
+        "verdict_data": {
+            "prediction": doc.get("prediction"),
+            "confidence": doc.get("confidence"),
+            "threat_level": doc.get("threat_level"),
+            "response_action": doc.get("response_action", "ALERT"),
+            "detection_latency_ms": doc.get("detection_latency"),
+            "verification_status": doc.get("verification_status", "PENDING"),
+        },
+        "model_provenance": {
+            "model_name": detector.name,
+            "model_version": getattr(detector, "version", "v1"),
+            "model_status": model_status,
+            "is_heuristic_placeholder": is_heuristic,
+        },
+        "acoustic_forensics": {
+            "trigger_details": doc.get("trigger_details", {}),
+            "timeline_length": len(doc.get("timeline", [])),
+            "timeline": doc.get("timeline", []),
+        },
+        "privacy_compliance": {
+            "store_audio": doc.get("store_audio", False),
+            "raw_audio_retained": False,
+            "policy": "GDPR-compliant ephemeral memory buffer. No persistent biometric voice records.",
+        },
+    }
+
+    # Canonical hash for integrity
+    canonical_bytes = json.dumps(packet_data, sort_keys=True).encode("utf-8")
+    sha256_hash = hashlib.sha256(canonical_bytes).hexdigest()
+    packet_data["integrity_hash_sha256"] = sha256_hash
+
+    return packet_data

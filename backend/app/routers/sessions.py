@@ -35,6 +35,50 @@ from app.models.session import (
 router = APIRouter(prefix="/session", tags=["Sessions"])
 
 
+@router.get("/timeline", response_model=List[dict])
+async def get_session_timeline(
+    session_id: str = Query(..., description="Session ID to fetch analysis timeline for"),
+    limit: int = Query(default=100, ge=1, le=500, description="Max events to return"),
+    current_user: UserInDB = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """
+    Returns the ordered analysis history for a session:
+    verdict, confidence, fake_probability, threat level, latency, and timestamp
+    for every audio analysis run against this session.
+
+    Newest events are returned first. Only the session owner or an Administrator
+    can access the timeline.
+    """
+    session_doc = await db.sessions.find_one({"session_id": session_id})
+    if not session_doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session '{session_id}' not found.",
+        )
+
+    if session_doc["user_id"] != current_user.id and current_user.role.value != "Administrator":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to view this session's timeline.",
+        )
+
+    cursor = db.analysis_timeline.find(
+        {"session_id": session_id},
+        {"_id": 0},
+    ).sort("timestamp", -1).limit(limit)
+
+    events = []
+    async for doc in cursor:
+        # Serialize datetime to ISO string for JSON
+        if "timestamp" in doc and hasattr(doc["timestamp"], "isoformat"):
+            doc["timestamp"] = doc["timestamp"].isoformat() + "Z"
+        events.append(doc)
+
+    return events
+
+
+
 @router.post("/start", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
 async def start_session(
     payload: SessionCreate = SessionCreate(),

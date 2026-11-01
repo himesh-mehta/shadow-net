@@ -6,6 +6,7 @@ from app.routers.audio import router as audio_router
 from app.routers.ws import router as ws_router
 from app.routers.verify import router as verify_router
 from app.routers.analytics import router as analytics_router
+from app.routers.evaluation import router as evaluation_router
 
 __all__ = [
     "auth_router",
@@ -16,4 +17,5 @@ __all__ = [
     "ws_router",
     "verify_router",
     "analytics_router",
+    "evaluation_router",
 ]

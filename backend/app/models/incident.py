@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 class PredictionType(str, Enum):
     REAL = "REAL"
     DEEPFAKE = "DEEPFAKE"
+    AI_SUSPECTED = "AI_SUSPECTED"
     UNCERTAIN = "UNCERTAIN"
 
 
