@@ -41,22 +41,12 @@ class StandardizedAudioDetector(DetectorInterface):
 
     def _init_backend(self):
         """Attempts to load PyTorch model and weights if available."""
+        if not self.model_path and not self.weights_dir:
+            return
         try:
             import torch
-            import torch.nn as nn
-
             self._torch = torch
-            self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-            arch = getattr(self.metadata, "architecture", "lcnn_spectrogram")
-            if "lcnn" in arch.lower() and not self.model_path:
-                from app.ml.architectures.lcnn import LCNNAudioDetector
-                net = LCNNAudioDetector(num_classes=2)
-            else:
-                import torchvision.models as models
-                net = models.resnet18(weights=None)
-                net.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
-                net.fc = nn.Linear(net.fc.in_features, 2)
+            self._device = torch.device("cpu")
 
             # Check if weights file exists and is trained
             weights_path = None
@@ -69,20 +59,19 @@ class StandardizedAudioDetector(DetectorInterface):
 
             if weights_path:
                 logger.info(f"Loading weights from {weights_path}")
-                checkpoint = torch.load(weights_path, map_location=self._device)
+                checkpoint = torch.load(weights_path, map_location=self._device, weights_only=True)
+                arch = checkpoint.get("model_name", self.metadata.architecture) if isinstance(checkpoint, dict) else self.metadata.architecture
+                from app.ml.legacy_models import build_legacy_model
+                net = build_legacy_model(arch)
                 state_dict = checkpoint.get("state_dict", checkpoint) if isinstance(checkpoint, dict) else checkpoint
                 net.load_state_dict(state_dict)
+                self.metadata.architecture = arch
                 self._is_loaded = True
                 self.metadata.is_trained = True
                 self.metadata.status = "TRAINED"
                 logger.info(f"Model successfully loaded trained weights from {weights_path}.")
             else:
-                # Untrained skeleton mode
-                self._is_loaded = False
-                logger.info(
-                    f"Model '{self.metadata.model_name}:{self.metadata.model_version}' initialized in "
-                    f"UNTRAINED/EXPERIMENTAL mode (status={self.metadata.status})."
-                )
+                return
 
             net.to(self._device)
             net.eval()
@@ -96,7 +85,7 @@ class StandardizedAudioDetector(DetectorInterface):
     @property
     def name(self) -> str:
         if self._is_loaded and self.is_trained:
-            return "ResNet18AudioClassifier (1-Channel Spectrogram)"
+            return f"Legacy {self.metadata.architecture} (experimental)"
         return self.metadata.model_name
 
     @property

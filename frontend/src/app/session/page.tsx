@@ -1,12 +1,13 @@
 "use client";
 
+import { WavRecorder } from "@/lib/wavRecorder";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { ThreatBadge } from "@/components/ui/ThreatBadge";
 import { WaveformVisualizer } from "@/components/ui/WaveformVisualizer";
 import { AnalysisTimeline, TimelineEvent } from "@/components/ui/AnalysisTimeline";
 import { SegmentTimeline, AudioSegment } from "@/components/ui/SegmentTimeline";
-import { api } from "@/lib/api";
+import { api, API_URL } from "@/lib/api";
 import { Session, DetectionAnalysis } from "@/types";
 import {
   Mic,
@@ -31,6 +32,7 @@ export default function SessionPage() {
   const [statusMessage, setStatusMessage] = useState("Ready. Start a test session or ingest WAV audio to analyze.");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [lastAnalysis, setLastAnalysis] = useState<DetectionAnalysis | null>(null);
+  const [runtimeStatus, setRuntimeStatus] = useState("CHECKING");
   const [error, setError] = useState<string | null>(null);
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
@@ -38,16 +40,16 @@ export default function SessionPage() {
   const [totalDuration, setTotalDuration] = useState(0);
   const [isStreamAnalyzing, setIsStreamAnalyzing] = useState(false);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaRecorderRef = useRef<WavRecorder | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
 
   const fetchTimeline = useCallback(async (sessionId: string) => {
     try {
       setTimelineLoading(true);
-      const token = typeof window !== "undefined" ? localStorage.getItem("shadow_net_token") : null;
+      const token = typeof window !== "undefined" ? api.getToken() : null;
       if (!token) return;
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/session/timeline?session_id=${sessionId}&limit=50`,
+        `${API_URL}/session/timeline?session_id=${sessionId}&limit=50`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (res.ok) {
@@ -60,6 +62,11 @@ export default function SessionPage() {
       setTimelineLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    api.getHealth().then((health) => setRuntimeStatus(health.detector?.model_status || "UNAVAILABLE"))
+      .catch(() => setRuntimeStatus("UNAVAILABLE"));
+  }, [lastAnalysis?.model_status]);
 
   // Check initial active session
   useEffect(() => {
@@ -145,7 +152,7 @@ export default function SessionPage() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioStreamRef.current = stream;
 
-      const mediaRecorder = new MediaRecorder(stream);
+      const mediaRecorder = new WavRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
 
       setSegments([]);
@@ -175,21 +182,21 @@ export default function SessionPage() {
                       ...prev,
                       {
                         window_index: idx,
-                        start_sec: idx * 2.0,
-                        end_sec: (idx + 1) * 2.0,
-                        fake_probability: res.fake_probability ?? res.confidence ?? 0.5,
+                        start_sec: idx * 4.0,
+                        end_sec: (idx + 1) * 4.0,
+                        fake_probability: res.ai_probability ?? 0.5,
                         prediction: res.prediction,
                         confidence: res.confidence,
                         threat_level: res.threat_level,
                       },
                     ];
                   });
-                  setTotalDuration((prev) => prev + 2.0);
+                  setTotalDuration((prev) => prev + 4.0);
 
                   // Refresh timeline after each mic chunk analysis
                   fetchTimeline(session.session_id);
-                } catch {
-                  // Fallback or ignore streaming chunk error
+                } catch (err: any) {
+                  setError(err.message || "Microphone analysis failed.");
                 }
               }
             };
@@ -200,9 +207,9 @@ export default function SessionPage() {
       };
 
       // Emit chunk every 2000ms
-      mediaRecorder.start(2000);
+      mediaRecorder.start(4000);
       setIsRecording(true);
-      setStatusMessage("Microphone stream active. Analyzing 2.0s rolling acoustic windows.");
+      setStatusMessage("Microphone stream active. Sending 4-second WAV chunks for analysis.");
     } catch (err: any) {
       setIsStreamAnalyzing(false);
       setError("Could not access microphone: " + (err.message || "Permission denied"));
@@ -221,7 +228,9 @@ export default function SessionPage() {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = "";
 
+    setLastAnalysis(null);
     setSelectedFile(file.name);
     setError(null);
     setIsAnalyzing(true);
@@ -246,7 +255,7 @@ export default function SessionPage() {
       formData.append("file", file);
       if (activeSessionId) formData.append("session_id", activeSessionId);
 
-      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const API_BASE = API_URL;
       const res = await fetch(`${API_BASE}/audio/analyze/stream`, {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -260,6 +269,8 @@ export default function SessionPage() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let receivedVerdict = false;
+      let streamError: string | null = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -285,30 +296,25 @@ export default function SessionPage() {
             }
 
             if (event.type === "session_verdict") {
-              setLastAnalysis({
-                mode: event.mode,
-                model_name: event.model_name,
-                prediction: event.prediction,
-                confidence: event.confidence,
-                threat_level: event.threat_level,
-                response_action: event.response_action,
-                detection_latency_ms: event.detection_latency_ms,
-                windows: [],
-              } as any);
+              receivedVerdict = true;
+              setLastAnalysis({ ...event, num_windows: event.total_windows, windows: [] });
               setStatusMessage(
-                `Stream complete: ${event.prediction} (${(event.confidence * 100).toFixed(1)}% confidence, ${event.detection_latency_ms?.toFixed(1)}ms)`
+                `Stream complete: ${event.display_verdict || event.prediction} (${(event.confidence * 100).toFixed(1)}% confidence, ${event.detection_latency_ms?.toFixed(1)}ms)`
               );
               if (activeSessionId) fetchTimeline(activeSessionId);
             }
 
             if (event.type === "error") {
-              setError(event.message);
+              streamError = event.message || "Audio analysis failed";
+              setError(streamError);
             }
           } catch {
             // malformed SSE line, ignore
           }
         }
       }
+      if (streamError) throw new Error(streamError);
+      if (!receivedVerdict) throw new Error("Analysis stream ended without a verdict. Retry the recording.");
     } catch (err: any) {
       setError(err.message || "Failed to stream audio analysis. Ensure WAV format is used.");
       setStatusMessage("Streaming analysis failed.");
@@ -321,6 +327,10 @@ export default function SessionPage() {
   return (
     <AppShell>
       <div className="space-y-6 font-mono">
+        <div className="rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-xs text-amber-200">
+          College prototype · Scores are uncalibrated model outputs, not proof of authenticity.
+          Start with a 3–10 second speech WAV. Demo mode always returns uncertain.
+        </div>
         {/* Top Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-slate-800">
           <div>
@@ -335,7 +345,7 @@ export default function SessionPage() {
             <div className="flex flex-wrap items-center gap-2 mt-2">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded font-mono text-[10px] font-bold tracking-wider bg-purple-950/70 border border-purple-700 text-purple-300 uppercase">
                 <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
-                MODEL STATUS: NOT TRAINED
+                MODEL STATUS: {lastAnalysis?.model_status || runtimeStatus}
               </span>
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded font-mono text-[10px] font-bold tracking-wider bg-amber-950/70 border border-amber-700 text-amber-300 uppercase">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
@@ -476,13 +486,13 @@ export default function SessionPage() {
                     <div className="text-[10px] text-slate-500 uppercase">Classification Verdict</div>
                     <div className="mt-1">
                       <ThreatBadge
-                        type={lastAnalysis.display_verdict || "UNCERTAIN (MODEL NOT TRAINED)"}
+                        type={lastAnalysis.display_verdict || "RESULT UNAVAILABLE"}
                         size="sm"
                       />
                     </div>
                   </div>
                   <div className="p-2.5 rounded bg-[#0b101d] border border-slate-800">
-                    <div className="text-[10px] text-slate-500 uppercase">AI Prob (Heuristic)</div>
+                    <div className="text-[10px] text-slate-500 uppercase">AI score</div>
                     <div className="text-sm font-bold text-white mt-1">
                       {(((lastAnalysis.ai_probability !== undefined ? lastAnalysis.ai_probability : lastAnalysis.confidence)) * 100).toFixed(1)}%
                     </div>
@@ -509,7 +519,7 @@ export default function SessionPage() {
                   <div className="p-3 rounded-lg bg-[#070d18] border border-cyan-900/40 text-xs space-y-1">
                     <div className="text-[10px] text-cyan-400 font-semibold uppercase tracking-wider flex items-center gap-1.5">
                       <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-                      Acoustic Forensic Attribution (Why)
+                      Acoustic Observations
                     </div>
                     <p className="text-slate-200 font-medium text-xs">
                       {lastAnalysis.explanation.top_reason}

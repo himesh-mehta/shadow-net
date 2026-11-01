@@ -67,7 +67,7 @@ class DecisionEngine:
 
         elif fake_probability < real_th:
             prediction = PredictionType.REAL
-            confidence = round(min(1.0, (real_th - fake_probability) / real_th + 0.5), 4)
+            confidence = round(1.0 - fake_probability, 4)
             threat_level = ThreatLevel.LOW
 
         else:
@@ -167,8 +167,8 @@ class DecisionEngine:
             "threat_level": overall_threat,
             "response_action": response_action,
             "average_fake_prob": round(avg_fake, 4),
-            "ai_probability": round(avg_fake, 4),
-            "real_probability": round(1.0 - avg_fake, 4),
+            "ai_probability": round(aggregated_metric, 4),
+            "real_probability": round(1.0 - aggregated_metric, 4),
             "max_fake_prob": round(max_fake, 4),
             "deepfake_window_count": deepfake_windows,
             "sustained_threat_detected": sustained_threat,

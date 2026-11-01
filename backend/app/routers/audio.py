@@ -24,6 +24,9 @@ from app.audio.preprocessing import load_audio, decode_base64_audio
 from app.audio.vad import get_vad
 from app.audio.features import slice_into_windows, extract_all_features
 from app.ml.factory import get_detector
+from app.ml.pretrained import DetectorUnavailable
+from starlette.concurrency import run_in_threadpool
+import numpy as np
 from app.ml.decision import DecisionEngine
 from app.ml.explainer import explain_verdict
 from app.models.incident import PredictionType, ThreatLevel, ResponseAction
@@ -68,6 +71,8 @@ class AudioAnalysisResponse(BaseModel):
     model_status: str = "NOT_TRAINED"
     is_heuristic_placeholder: bool = True
     display_verdict: str = "UNCERTAIN (MODEL NOT TRAINED)"
+    validation_status: str = "NOT_LOCALLY_VALIDATED"
+    score_type: str = "uncalibrated_softmax"
     is_synthetic: bool
     prediction: PredictionType
     confidence: float
@@ -104,6 +109,7 @@ async def _process_audio_pipeline(
 
     # Read system settings from DB or defaults
     settings = get_settings()
+    configured_demo = settings.DEMO_MODE
     configured_window = window_length or settings.AUDIO_WINDOW_SECONDS
     configured_vad = vad_sensitivity if vad_sensitivity is not None else settings.VAD_SENSITIVITY
     configured_threshold = detection_threshold or settings.DETECTION_THRESHOLD
@@ -118,12 +124,23 @@ async def _process_audio_pipeline(
     if db is not None:
         db_settings = await db.settings.find_one({"scope": "global"})
         if db_settings:
+            configured_demo = db_settings.get("demo_mode", configured_demo)
             if window_length is None:
                 configured_window = db_settings.get("audio_window_length", configured_window)
             if vad_sensitivity is None:
                 configured_vad = db_settings.get("vad_sensitivity", configured_vad)
             if detection_threshold is None:
                 configured_threshold = db_settings.get("detection_threshold", configured_threshold)
+                if "detection_threshold" in db_settings:
+                    configured_real_th = round(1.0 - configured_threshold, 4)
+                    configured_deepfake_th = configured_threshold
+
+    try:
+        detector = await run_in_threadpool(get_detector, demo_mode=configured_demo)
+    except DetectorUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    if not 0.5 <= configured_window <= 5.0 or not 0.5 < configured_deepfake_th < 1:
+        raise HTTPException(status_code=422, detail="Window must be 0.5–5s and detection threshold greater than 0.5.")
 
     # 1. Preprocessing: Decode, Mono-convert, Resample to 16kHz, Normalize
     try:
@@ -141,6 +158,9 @@ async def _process_audio_pipeline(
             detail="Provided audio stream contains no decodable sample data."
         )
 
+    if len(audio) < sr // 2 or len(audio) > settings.MAX_AUDIO_SECONDS * sr or not np.isfinite(audio).all() or np.max(np.abs(audio)) < 1e-6:
+        raise HTTPException(status_code=422, detail="Provide 0.5–60 seconds of non-silent, finite audio.")
+
     # 2. Voice Activity Detection (drop silence)
     vad = get_vad()
     speech_audio, intervals, vad_meta = vad.filter_speech(
@@ -148,7 +168,8 @@ async def _process_audio_pipeline(
     )
 
     # If VAD dropped all frames as silence, fallback to original to permit analysis
-    active_audio = speech_audio if speech_audio.size > 0 else audio
+    # Keep waveform timing intact for pretrained models; VAD is reported as telemetry only.
+    active_audio = audio if getattr(detector, "uses_waveform", False) else (speech_audio if speech_audio.size > 0 else audio)
 
     # 3. Rolling Window Slicing (~1-2 seconds)
     windows = slice_into_windows(
@@ -159,23 +180,23 @@ async def _process_audio_pipeline(
     )
 
     # 4. Feature Extraction & Model Inference per window
-    detector = get_detector()
     decision_engine = DecisionEngine(
         real_threshold=configured_real_th,
         deepfake_threshold=configured_deepfake_th,
     )
 
+    model_status = getattr(detector, "model_status", "NOT_TRAINED")
     window_summaries: List[WindowInferenceSummary] = []
     window_predictions_for_agg = []
     sustained_counter = 0
 
     for w in windows:
-        feats = extract_all_features(w["audio"], sr=sr)
+        feats = await run_in_threadpool(extract_all_features, w["audio"], sr=sr)
         mel_spectrogram = feats["mel_spectrogram"]
 
         # Run inference through active detector
-        pred_result = detector.predict_window(
-            mel_spectrogram,
+        pred_result = await run_in_threadpool(detector.predict_audio,
+            w["audio"][:round((w["end_sec"] - w["start_sec"]) * sr)], sr=sr,
             window_start=w["start_sec"],
             window_end=w["end_sec"],
         )
@@ -184,10 +205,13 @@ async def _process_audio_pipeline(
 
         # Evaluate window with Decision Engine
         win_pred, win_threat, win_conf = decision_engine.evaluate_window(
-            fake_prob, threshold=configured_threshold
+            fake_prob
         )
 
-        if fake_prob >= configured_deepfake_th:
+        if model_status != "TRAINED":
+            win_pred, win_threat, win_conf = PredictionType.UNCERTAIN, ThreatLevel.MEDIUM, 0.5
+
+        if model_status == "TRAINED" and fake_prob >= configured_deepfake_th:
             sustained_counter += 1
         else:
             sustained_counter = 0
@@ -227,7 +251,6 @@ async def _process_audio_pipeline(
     model_status = getattr(detector, "model_status", "NOT_TRAINED")
     session_verdict = decision_engine.evaluate_session(
         window_predictions_for_agg,
-        threshold=configured_threshold,
         model_status=model_status,
     )
 
@@ -286,7 +309,7 @@ async def _process_audio_pipeline(
             logger.warning(f"Failed to persist timeline event: {_e}")
 
     # 8. Automated Incident Response if session_id is provided and deepfake detected
-    if session_id and session_verdict["prediction"] == PredictionType.DEEPFAKE:
+    if session_id and session_verdict["prediction"] in (PredictionType.DEEPFAKE, PredictionType.AI_SUSPECTED):
         from app.services.incident_service import handle_detection_trigger
         await handle_detection_trigger(
             session_id=session_id,
@@ -308,10 +331,12 @@ async def _process_audio_pipeline(
         model_status=model_status,
         is_heuristic_placeholder=getattr(detector, "is_heuristic_placeholder", True),
         display_verdict=session_verdict.get("display_verdict", "UNCERTAIN (MODEL NOT TRAINED)"),
+        validation_status=getattr(detector, "validation_status", "NOT_LOCALLY_VALIDATED"),
+        score_type="uncalibrated_softmax" if detector.is_loaded else "demo_placeholder",
         is_synthetic=getattr(detector, "is_heuristic_placeholder", True),
         prediction=session_verdict["prediction"],
         confidence=session_verdict["confidence"],
-        ai_probability=session_verdict["average_fake_prob"],
+        ai_probability=session_verdict["ai_probability"],
         real_probability=session_verdict.get("real_probability", round(1.0 - session_verdict["average_fake_prob"], 4)),
         threat_level=session_verdict["threat_level"],
         response_action=session_verdict["response_action"],
@@ -417,6 +442,7 @@ async def _stream_audio_pipeline(
         return f"data: {json.dumps(payload)}\n\n"
 
     settings = get_settings()
+    configured_demo = settings.DEMO_MODE
     configured_window = window_length or settings.AUDIO_WINDOW_SECONDS
     configured_vad = vad_sensitivity if vad_sensitivity is not None else settings.VAD_SENSITIVITY
     configured_real_th = settings.REAL_THRESHOLD
@@ -430,8 +456,24 @@ async def _stream_audio_pipeline(
     if db is not None:
         db_settings = await db.settings.find_one({"scope": "global"})
         if db_settings:
-            configured_window = db_settings.get("audio_window_length", configured_window)
-            configured_vad = db_settings.get("vad_sensitivity", configured_vad)
+            configured_demo = db_settings.get("demo_mode", configured_demo)
+            if window_length is None:
+                configured_window = db_settings.get("audio_window_length", configured_window)
+            if vad_sensitivity is None:
+                configured_vad = db_settings.get("vad_sensitivity", configured_vad)
+            if detection_threshold is None and "detection_threshold" in db_settings:
+                configured_threshold = db_settings["detection_threshold"]
+                configured_real_th = round(1.0 - configured_threshold, 4)
+                configured_deepfake_th = configured_threshold
+
+    try:
+        detector = await run_in_threadpool(get_detector, demo_mode=configured_demo)
+    except DetectorUnavailable as exc:
+        yield sse("error", {"message": str(exc)})
+        return
+    if not 0.5 <= configured_window <= 5.0 or not 0.5 < configured_deepfake_th < 1:
+        yield sse("error", {"message": "Window must be 0.5–5s and threshold greater than 0.5."})
+        return
 
     # ── Preprocess ────────────────────────────────────────────────────────────
     try:
@@ -444,10 +486,15 @@ async def _stream_audio_pipeline(
         yield sse("error", {"message": "No decodable audio data found in the file."})
         return
 
+    if len(audio) < sr // 2 or len(audio) > settings.MAX_AUDIO_SECONDS * sr or not np.isfinite(audio).all() or np.max(np.abs(audio)) < 1e-6:
+        yield sse("error", {"message": "Provide 0.5–60 seconds of non-silent, finite audio."})
+        return
+
     # ── VAD ───────────────────────────────────────────────────────────────────
     vad = get_vad()
     speech_audio, intervals, vad_meta = vad.filter_speech(audio, sr=sr, sensitivity=configured_vad)
-    active_audio = speech_audio if speech_audio.size > 0 else audio
+    # Keep waveform timing intact for pretrained models; VAD is reported as telemetry only.
+    active_audio = audio if getattr(detector, "uses_waveform", False) else (speech_audio if speech_audio.size > 0 else audio)
 
     # ── Window slicing ────────────────────────────────────────────────────────
     windows = slice_into_windows(
@@ -460,7 +507,6 @@ async def _stream_audio_pipeline(
         yield sse("error", {"message": "No audio windows could be extracted (audio too short?)"})
         return
 
-    detector = get_detector()
     decision_engine = DecisionEngine(
         real_threshold=configured_real_th,
         deepfake_threshold=configured_deepfake_th,
@@ -484,6 +530,7 @@ async def _stream_audio_pipeline(
         "session_id": session_id,
     })
 
+    stream_window_packets = []
     # ── Per-window inference ──────────────────────────────────────────────────
     window_predictions_for_agg = []
     start_t = time.perf_counter()
@@ -492,9 +539,9 @@ async def _stream_audio_pipeline(
     sustained_counter = 0
 
     for w in windows:
-        feats = extract_all_features(w["audio"], sr=sr)
-        pred_result = detector.predict_window(
-            feats["mel_spectrogram"],
+        feats = await run_in_threadpool(extract_all_features, w["audio"], sr=sr)
+        pred_result = await run_in_threadpool(detector.predict_audio,
+            w["audio"][:round((w["end_sec"] - w["start_sec"]) * sr)], sr=sr,
             window_start=w["start_sec"],
             window_end=w["end_sec"],
         )
@@ -503,7 +550,10 @@ async def _stream_audio_pipeline(
 
         win_pred, win_threat, win_conf = decision_engine.evaluate_window(fake_prob)
 
-        if fake_prob >= configured_deepfake_th:
+        if model_status != "TRAINED":
+            win_pred, win_threat, win_conf = PredictionType.UNCERTAIN, ThreatLevel.MEDIUM, 0.5
+
+        if model_status == "TRAINED" and fake_prob >= configured_deepfake_th:
             sustained_counter += 1
         else:
             sustained_counter = 0
@@ -539,6 +589,7 @@ async def _stream_audio_pipeline(
             "is_padded": w["is_padded"],
             "visual_matrix": feats["visual_matrix"],
         }
+        stream_window_packets.append(window_event)
         yield sse("window", window_event)
 
     elapsed_ms = round((time.perf_counter() - start_t) * 1000, 2)
@@ -582,14 +633,25 @@ async def _stream_audio_pipeline(
         except Exception as _e:
             logger.warning(f"SSE timeline persist failed: {_e}")
 
+    if session_id and session_verdict["prediction"] in (PredictionType.DEEPFAKE, PredictionType.AI_SUSPECTED):
+        from app.services.incident_service import handle_detection_trigger
+        await handle_detection_trigger(
+            session_id=session_id, prediction=session_verdict["prediction"],
+            confidence=session_verdict["confidence"], threat_level=session_verdict["threat_level"],
+            detection_latency_ms=elapsed_ms, trigger_details={"source": "wav_upload_stream", "model_name": detector.name},
+            timeline=stream_window_packets, db=db,
+        )
+
     yield sse("session_verdict", {
+        "validation_status": getattr(detector, "validation_status", "NOT_LOCALLY_VALIDATED"),
+        "score_type": "uncalibrated_softmax" if detector.is_loaded else "demo_placeholder",
         "prediction": session_verdict["prediction"].value,
         "display_verdict": session_verdict.get("display_verdict", "UNCERTAIN (MODEL NOT TRAINED)"),
         "confidence": session_verdict["confidence"],
         "threat_level": session_verdict["threat_level"].value,
         "response_action": session_verdict["response_action"].value,
         "average_fake_prob": session_verdict["average_fake_prob"],
-        "ai_probability": session_verdict["average_fake_prob"],
+        "ai_probability": session_verdict["ai_probability"],
         "real_probability": session_verdict.get("real_probability", round(1.0 - session_verdict["average_fake_prob"], 4)),
         "max_fake_prob": session_verdict["max_fake_prob"],
         "deepfake_window_count": session_verdict["deepfake_window_count"],
@@ -640,7 +702,7 @@ async def analyze_audio_stream(
     audio_bytes = await file.read()
 
     return StreamingResponse(
-        _stream_audio_pipeline(
+        _safe_stream_audio_pipeline(
             audio_bytes=audio_bytes,
             session_id=session_id,
             window_length=window_length,
@@ -655,3 +717,12 @@ async def analyze_audio_stream(
             "Access-Control-Allow-Origin": "*",
         },
     )
+
+
+async def _safe_stream_audio_pipeline(**kwargs):
+    try:
+        async for event in _stream_audio_pipeline(**kwargs):
+            yield event
+    except Exception as exc:
+        logger.exception("Streaming audio analysis failed")
+        yield "data: " + json.dumps({"type": "error", "message": str(exc)}) + "\n\n"

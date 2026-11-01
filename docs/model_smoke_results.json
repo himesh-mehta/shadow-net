@@ -1,0 +1,148 @@
+{
+  "note": "Small integration smoke check, not an independent accuracy benchmark. Four files from two source groups; unknown overlap with model training. No threshold tuning performed.",
+  "source": "https://huggingface.co/datasets/garystafford/deepfake-audio-detection",
+  "first_candidate": {
+    "model": "MelodyMachine/Deepfake-audio-detection-V2",
+    "revision": "de3cde5a29c449bb5268814e421b46bf6ebdcd72",
+    "test_type": "Four public clips; two source groups; not a validation benchmark. Training overlap unknown.",
+    "results": [
+      {
+        "file": "fake_el_0001_c_part_002.flac",
+        "expected": "AI_SUSPECTED",
+        "duration": 3.612,
+        "verdict": "REAL",
+        "ai_score": 0.0,
+        "window_scores": [
+          1.680219611444045e-05
+        ],
+        "latency_seconds": 0.435
+      },
+      {
+        "file": "fake_el_0001_c_part_003.flac",
+        "expected": "AI_SUSPECTED",
+        "duration": 3.309,
+        "verdict": "REAL",
+        "ai_score": 0.0,
+        "window_scores": [
+          1.681978210399393e-05
+        ],
+        "latency_seconds": 0.412
+      },
+      {
+        "file": "real_yt_0000_p2_part_167.flac",
+        "expected": "REAL",
+        "duration": 5.237,
+        "verdict": "REAL",
+        "ai_score": 0.0,
+        "window_scores": [
+          1.680982495599892e-05,
+          1.6800897356006317e-05
+        ],
+        "latency_seconds": 0.851
+      },
+      {
+        "file": "real_yt_0000_part_001.flac",
+        "expected": "REAL",
+        "duration": 4.642,
+        "verdict": "REAL",
+        "ai_score": 0.0,
+        "window_scores": [
+          1.680233981460333e-05,
+          1.680273999227211e-05
+        ],
+        "latency_seconds": 0.685
+      }
+    ]
+  },
+  "selected_candidate": {
+    "model": "Gustking/wav2vec2-large-xlsr-deepfake-audio-classification",
+    "revision": "f7050b586236dc910d1157f430def2d0647b02b4",
+    "test_type": "Four public clips; two source groups; not a validation benchmark. Training overlap unknown.",
+    "results": [
+      {
+        "file": "fake_el_0001_c_part_002.flac",
+        "expected": "AI_SUSPECTED",
+        "duration": 3.612,
+        "verdict": "AI_SUSPECTED",
+        "ai_score": 0.8853,
+        "window_scores": [
+          0.8852899074554443
+        ],
+        "latency_seconds": 1.061
+      },
+      {
+        "file": "fake_el_0001_c_part_003.flac",
+        "expected": "AI_SUSPECTED",
+        "duration": 3.309,
+        "verdict": "AI_SUSPECTED",
+        "ai_score": 0.8804,
+        "window_scores": [
+          0.8803995251655579
+        ],
+        "latency_seconds": 0.99
+      },
+      {
+        "file": "real_yt_0000_p2_part_167.flac",
+        "expected": "REAL",
+        "duration": 5.237,
+        "verdict": "REAL",
+        "ai_score": 0.082,
+        "window_scores": [
+          0.08334964513778687,
+          0.07671892642974854
+        ],
+        "latency_seconds": 2.008
+      },
+      {
+        "file": "real_yt_0000_part_001.flac",
+        "expected": "REAL",
+        "duration": 4.642,
+        "verdict": "REAL",
+        "ai_score": 0.109,
+        "window_scores": [
+          0.11266768723726273,
+          0.09427543729543686
+        ],
+        "latency_seconds": 1.751
+      }
+    ]
+  },
+  "live_api": [
+    {
+      "prediction": "AI_SUSPECTED",
+      "display_verdict": "AI_SUSPECTED",
+      "ai_probability": 0.8853,
+      "model_name": "Gustking/wav2vec2-large-xlsr-deepfake-audio-classification",
+      "model_status": "TRAINED",
+      "detection_latency_ms": 1459.07,
+      "file": "fake_el_0001_c_part_002.flac"
+    },
+    {
+      "prediction": "AI_SUSPECTED",
+      "display_verdict": "AI_SUSPECTED",
+      "ai_probability": 0.8804,
+      "model_name": "Gustking/wav2vec2-large-xlsr-deepfake-audio-classification",
+      "model_status": "TRAINED",
+      "detection_latency_ms": 1143.45,
+      "file": "fake_el_0001_c_part_003.flac"
+    },
+    {
+      "prediction": "REAL",
+      "display_verdict": "REAL",
+      "ai_probability": 0.082,
+      "model_name": "Gustking/wav2vec2-large-xlsr-deepfake-audio-classification",
+      "model_status": "TRAINED",
+      "detection_latency_ms": 2746.03,
+      "file": "real_yt_0000_p2_part_167.flac"
+    },
+    {
+      "prediction": "REAL",
+      "display_verdict": "REAL",
+      "ai_probability": 0.109,
+      "model_name": "Gustking/wav2vec2-large-xlsr-deepfake-audio-classification",
+      "model_status": "TRAINED",
+      "detection_latency_ms": 2166.69,
+      "file": "real_yt_0000_part_001.flac"
+    }
+  ]
+}

@@ -21,7 +21,7 @@ db_manager = DatabaseManager()
 async def connect_to_mongo():
     """Connect to MongoDB or fallback to in-memory mock client."""
     settings = get_settings()
-    logger.info(f"Connecting to MongoDB at {settings.MONGODB_URI}...")
+    logger.info("Connecting to configured MongoDB...")
 
     try:
         # Attempt connecting to real MongoDB with a fast 2-second server selection timeout
@@ -52,6 +52,8 @@ async def connect_to_mongo():
 
     # Ensure indexes on key collections
     await init_indexes()
+    if db_manager.is_mock:
+        await seed_demo_users()
 
 
 async def close_mongo_connection():
@@ -90,3 +92,21 @@ async def init_indexes():
 def get_db():
     """Dependency getter for the database instance."""
     return db_manager.db
+
+
+async def seed_demo_users():
+    """Predictable public demo accounts, only in temporary mock storage."""
+    import uuid
+    from datetime import datetime
+    from app.routers.auth import get_password_hash
+    accounts = [("alex.vance", "admin123456", "Administrator"),
+                ("sarah.chen", "analyst123456", "Security Analyst"),
+                ("james.wilson", "user123456", "User")]
+    for username, password, role in accounts:
+        if await db_manager.db.users.find_one({"username": username}):
+            continue
+        await db_manager.db.users.insert_one({
+            "id": str(uuid.uuid4()), "username": username, "email": username + "@example.com",
+            "hashed_password": get_password_hash(password), "role": role,
+            "is_active": True, "created_at": datetime.utcnow(), "updated_at": datetime.utcnow(),
+        })

@@ -85,6 +85,4 @@ class AudioSpoofDataset(Dataset):
             return tensor, label
 
         except Exception as e:
-            logger.warning(f"Error loading {audio_path}: {e}. Returning zero tensor fallback.")
-            # Shape for 2.0s at 16kHz is (1, 128, 63)
-            return torch.zeros((1, 128, 63), dtype=torch.float32), label
+            raise RuntimeError(f"Cannot load dataset audio {audio_path}; fix the manifest or file before training.") from e

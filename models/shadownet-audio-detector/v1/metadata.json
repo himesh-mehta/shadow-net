@@ -16,7 +16,7 @@
     "n_mels": 128,
     "n_fft": 1024,
     "hop_length": 512,
-    "f_min": 20.0,
+    "f_min": 0.0,
     "f_max": 8000.0,
     "normalized": true
   },

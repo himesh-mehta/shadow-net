@@ -68,3 +68,8 @@ class DetectorInterface(ABC):
             pred["end_sec"] = w.get("end_sec", 0.0)
             results.append(pred)
         return results
+
+    def predict_audio(self, audio: np.ndarray, sr: int = 16000, **kwargs) -> Dict[str, Any]:
+        """Waveform entry point. Spectrogram detectors retain their original input."""
+        from app.audio.features import extract_mel_spectrogram
+        return self.predict_window(extract_mel_spectrogram(audio, sr=sr), **kwargs)

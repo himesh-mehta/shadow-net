@@ -39,6 +39,14 @@ async def lifespan(app: FastAPI):
     """Lifecycle manager for startup and shutdown events."""
     logger.info("Starting SHADOW-NET backend service...")
     await connect_to_mongo()
+    from app.db import get_db
+    from app.ml.factory import get_detector
+    from starlette.concurrency import run_in_threadpool
+    doc = await get_db().settings.find_one({"scope": "global"})
+    try:
+        await run_in_threadpool(get_detector, demo_mode=doc.get("demo_mode", get_settings().DEMO_MODE) if doc else get_settings().DEMO_MODE)
+    except Exception as exc:
+        logger.error("Detector unavailable: %s", exc)
     yield
     logger.info("Shutting down SHADOW-NET backend service...")
     await close_mongo_connection()
@@ -93,6 +101,7 @@ async def health_check():
             "engine": db_mode,
         },
         "environment": "development",
+        "detector": __import__("app.ml.factory", fromlist=["detector_status"]).detector_status(),
     }
 
 

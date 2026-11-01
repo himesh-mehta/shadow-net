@@ -18,3 +18,8 @@ soundfile>=0.12.1
 torch>=2.2.0
 torchvision>=0.17.0
 torchaudio>=2.2.0
+
+# Pretrained waveform detector (public safetensors only)
+transformers>=4.44,<5
+huggingface-hub>=0.24,<1
+safetensors>=0.4

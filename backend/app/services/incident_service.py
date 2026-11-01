@@ -50,7 +50,7 @@ async def handle_detection_trigger(
 
     incident_id = str(uuid.uuid4())
     now = datetime.utcnow()
-    action = ResponseAction.RESTRICT_SESSION if threat_level in [ThreatLevel.HIGH, ThreatLevel.CRITICAL] else ResponseAction.ALERT
+    action = ResponseAction.RESTRICT_SESSION if threat_level == ThreatLevel.CRITICAL else ResponseAction.ALERT
 
     incident_doc = {
         "incident_id": incident_id,
@@ -89,7 +89,7 @@ async def handle_detection_trigger(
         "confidence": confidence,
         "threat_level": threat_level.value,
         "response_action": action.value,
-        "message": f"Deepfake voice signature detected with {confidence*100:.1f}% confidence. Session restricted.",
+        "message": f"Suspected AI speech: model score {confidence*100:.1f}%. Prototype response: {action.value}.",
         "requires_verification": (action == ResponseAction.RESTRICT_SESSION),
     }
     await ws_manager.broadcast_to_session(session_id, alert_packet)

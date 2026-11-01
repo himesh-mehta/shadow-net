@@ -73,8 +73,8 @@ class VerdictExplanation:
             "verdict": self.verdict,
             "confidence": self.confidence,
             "fake_probability": self.fake_probability,
-            "summary": self.summary,
-            "top_reason": self.top_reason,
+            "summary": "Acoustic observations only. These heuristic measurements do not explain the neural model or prove manipulation.",
+            "top_reason": "Acoustic observations only; not evidence of manipulation or a model explanation.",
             "mode": self.mode,
             "indicators": [
                 {
@@ -86,7 +86,7 @@ class VerdictExplanation:
                     "is_suspicious": f.is_suspicious,
                     "direction": f.direction,
                     "suspicion_weight": round(f.suspicion_weight, 3),
-                    "plain_english": f.plain_english,
+                    "plain_english": f"{f.label}: {f.value:.4f}. Reference band is an unvalidated prototype heuristic.",
                 }
                 for f in self.indicators
             ],

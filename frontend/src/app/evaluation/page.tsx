@@ -110,6 +110,10 @@ export default function EvaluationPage() {
   return (
     <AppShell>
       <div className="space-y-6 pb-12 max-w-7xl mx-auto">
+        <div className="rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-xs text-amber-200">
+          The built-in evaluation uses mathematical test signals, not human speech. Its metrics test the pipeline only.
+          To evaluate your recordings, follow README.md and run scripts/check_recordings.py.
+        </div>
         {/* Header & Benchmark Controls */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-[#0d1424] border border-slate-800/80 rounded-xl p-6 shadow-xl">
           <div>

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 class SystemSettings(BaseModel):
     detection_threshold: float = Field(
-        default=0.75, ge=0.5, le=0.99,
+        default=0.75, gt=0.5, le=0.99,
         description="Confidence threshold to trigger deepfake classification and session restriction"
     )
     audio_window_length: float = Field(
@@ -30,7 +30,7 @@ class SystemSettings(BaseModel):
 
 
 class SettingsUpdate(BaseModel):
-    detection_threshold: Optional[float] = Field(None, ge=0.5, le=0.99)
+    detection_threshold: Optional[float] = Field(None, gt=0.5, le=0.99)
     audio_window_length: Optional[float] = Field(None, ge=0.5, le=5.0)
     vad_sensitivity: Optional[int] = Field(None, ge=0, le=3)
     demo_mode: Optional[bool] = None

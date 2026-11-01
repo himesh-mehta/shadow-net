@@ -53,7 +53,7 @@ function Tooltip({ segment }: { segment: AudioSegment }) {
         </span>
       </div>
       <div className="flex justify-between text-slate-400">
-        <span>AI Prob (Heuristic)</span>
+        <span>AI score</span>
         <span className="text-slate-200">{(segment.fake_probability * 100).toFixed(1)}%</span>
       </div>
       <div className="flex justify-between text-slate-400">

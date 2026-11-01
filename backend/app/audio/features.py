@@ -81,7 +81,8 @@ def slice_into_windows(
 
     # If there is remaining speech longer than 0.5s that wasn't included
     remaining = total_samples - start
-    if remaining >= int(0.5 * sr) and start < total_samples:
+    last_covered = int(round(windows[-1]["end_sec"] * sr)) if windows else 0
+    if total_samples - last_covered >= int(0.5 * sr) and start < total_samples:
         tail = np.zeros(window_samples, dtype=np.float32)
         tail[:remaining] = audio[start:total_samples]
         windows.append(

@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     #   fake_prob ≥ DEEPFAKE_THRESHOLD    → DEEPFAKE
     REAL_THRESHOLD: float = 0.35
     DEEPFAKE_THRESHOLD: float = 0.65
-    AUDIO_WINDOW_SECONDS: float = 2.0
+    AUDIO_WINDOW_SECONDS: float = 4.0
     VAD_SENSITIVITY: int = 2
     # Model Artifact Convention
     # Structured under: models/<ACTIVE_MODEL_NAME>/<ACTIVE_MODEL_VERSION>/
@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     ACTIVE_MODEL_VERSION: str = "v1"
     MODEL_PATH: str = "../model/resnet18.pth"  # Legacy fallback path
     DEMO_MODE: bool = True
+    DETECTOR_BACKEND: str = "huggingface"  # huggingface | legacy
+    HF_MODEL_ID: str = "Gustking/wav2vec2-large-xlsr-deepfake-audio-classification"
+    HF_MODEL_REVISION: str = "f7050b586236dc910d1157f430def2d0647b02b4"
+    HF_LOCAL_FILES_ONLY: bool = True  # Run scripts/download_detector.py once first
+    CPU_THREADS: int = 2
+    INFERENCE_DEVICE: str = "cpu"
+    MAX_AUDIO_SECONDS: float = 60.0
 
     # Audio Privacy Policy (Strictly False by default)
     STORE_AUDIO_DEFAULT: bool = False

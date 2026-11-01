@@ -17,8 +17,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -68,3 +68,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Pretrained artifacts stay in the Hugging Face cache, not the source archive.
+*.safetensors

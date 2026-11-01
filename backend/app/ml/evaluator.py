@@ -42,6 +42,7 @@ def run_evaluation(
     audio_dir: Path,
     real_threshold: Optional[float] = None,
     deepfake_threshold: Optional[float] = None,
+    detector=None,
 ) -> Dict[str, Any]:
     """
     Run evaluation harness across all labeled WAV files in audio_dir.
@@ -52,7 +53,7 @@ def run_evaluation(
     fake_th = deepfake_threshold if deepfake_threshold is not None else settings.DEEPFAKE_THRESHOLD
 
     decision_engine = DecisionEngine(real_threshold=real_th, deepfake_threshold=fake_th)
-    detector = get_detector()
+    detector = detector or get_detector()
     vad = get_vad()
 
     wav_files = sorted(audio_dir.glob("*.wav"))
@@ -84,7 +85,7 @@ def run_evaluation(
 
         # VAD filtering
         speech_audio, _, _ = vad.filter_speech(audio, sr=sr, sensitivity=settings.VAD_SENSITIVITY)
-        active_audio = speech_audio if speech_audio.size > 0 else audio
+        active_audio = audio if getattr(detector, "uses_waveform", False) else (speech_audio if speech_audio.size > 0 else audio)
 
         # Windowing
         windows = slice_into_windows(
@@ -109,7 +110,7 @@ def run_evaluation(
 
             for w in windows:
                 feats = extract_all_features(w["audio"], sr=sr)
-                pred = detector.predict_window(feats["mel_spectrogram"])
+                pred = detector.predict_audio(w["audio"][:round((w["end_sec"] - w["start_sec"]) * sr)], sr=sr)
                 fake_p = pred["fake_probability"]
                 win_pred, win_threat, win_conf = decision_engine.evaluate_window(fake_p)
                 window_preds_for_agg.append({
@@ -121,11 +122,13 @@ def run_evaluation(
                     "mfcc": feats["mfcc"],
                 })
 
-            session_eval = decision_engine.evaluate_session(window_preds_for_agg)
+            session_eval = decision_engine.evaluate_session(window_preds_for_agg, model_status=getattr(detector, "model_status", "NOT_TRAINED"))
             raw_pred = session_eval["prediction"]
             verdict = raw_pred.value if hasattr(raw_pred, "value") else str(raw_pred)
+            if verdict == "AI_SUSPECTED":
+                verdict = "DEEPFAKE"
             confidence = session_eval["confidence"]
-            fake_prob = round(session_eval.get("average_fake_prob", 0.5), 4)
+            fake_prob = round(session_eval.get("ai_probability", 0.5), 4)
 
             # Pick representative features for explanation
             rep_w = min(
@@ -205,8 +208,8 @@ def run_evaluation(
     strict_accuracy = round((tp + tn) / total_evaluated, 4) if total_evaluated > 0 else 0.0
     decisive_accuracy = round((tp + tn) / decisive_total, 4) if decisive_total > 0 else 0.0
     precision = round(tp / (tp + fp), 4) if (tp + fp) > 0 else 0.0
-    recall = round(tp / (tp + fn), 4) if (tp + fn) > 0 else 0.0
-    specificity = round(tn / (tn + fp), 4) if (tn + fp) > 0 else 0.0
+    recall = round(tp / total_fake, 4) if total_fake > 0 else 0.0
+    specificity = round(tn / total_real, 4) if total_real > 0 else 0.0
     
     if (precision + recall) > 0:
         f1_score = round(2 * (precision * recall) / (precision + recall), 4)
@@ -217,6 +220,12 @@ def run_evaluation(
     avg_latency_ms = round(sum(r["latency_ms"] for r in results) / total_evaluated, 1) if total_evaluated > 0 else 0.0
 
     report = {
+        "model_name": detector.name,
+        "model_version": getattr(detector, "version", None),
+        "model_status": getattr(detector, "model_status", "NOT_TRAINED"),
+        "mode": detector.mode,
+        "validation_status": "NOT_LOCALLY_VALIDATED",
+        "dataset_note": "Repository samples are mathematical signals. External data requires documented provenance; this report does not establish generalization.",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "dataset_directory": str(audio_dir),
         "thresholds": {

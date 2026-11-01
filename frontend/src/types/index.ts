@@ -54,6 +54,8 @@ export interface AudioAnalysis {
   model_name: string;
   model_version?: string;
   model_status?: "NOT_TRAINED" | "TRAINED";
+  validation_status?: string;
+  score_type?: string;
   is_heuristic_placeholder?: boolean;
   display_verdict?: string;
   is_synthetic?: boolean;

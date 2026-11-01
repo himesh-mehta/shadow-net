@@ -23,12 +23,7 @@ export function Header() {
         if (!isMounted) return;
         setTelemetryOnline(health?.status === "ok");
         
-        try {
-          const settings = await api.getSettings();
-          if (isMounted) setIsDemoMode(Boolean(settings.demo_mode));
-        } catch {
-          // If settings unauthorized for non-admin, default remains
-        }
+        setIsDemoMode(health.detector?.mode !== "ml" || !health.detector?.loaded);
       } catch {
         if (isMounted) setTelemetryOnline(false);
       }

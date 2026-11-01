@@ -20,7 +20,7 @@ class FeatureConfig(BaseModel):
     n_mels: int = 128
     n_fft: int = 1024
     hop_length: int = 512
-    f_min: float = 20.0
+    f_min: float = 0.0
     f_max: float = 8000.0
     normalized: bool = True
 

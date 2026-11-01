@@ -202,6 +202,7 @@ def train_pipeline(
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
 
+    best_epoch = 0
     best_val_auc = -1.0
     best_val_loss = float("inf")
     best_metrics = {}
@@ -231,7 +232,8 @@ def train_pipeline(
         is_best = val_metrics["roc_auc"] > best_val_auc or (
             val_metrics["roc_auc"] == best_val_auc and val_loss < best_val_loss
         )
-        if is_best or epoch == epochs:
+        if is_best:
+            best_epoch = epoch
             best_val_auc = val_metrics["roc_auc"]
             best_val_loss = val_loss
             best_metrics = val_metrics
@@ -245,6 +247,9 @@ def train_pipeline(
             torch.save(checkpoint, str(out_path))
             logger.info(f"Saved checkpoint to {out_path} (Val AUC: {best_val_auc:.4f})")
 
+    last_path = out_path.with_name(out_path.stem + ".last" + out_path.suffix)
+    torch.save({"state_dict": model.state_dict(), "epoch": epoch, "model_name": model_name,
+                "metrics": val_metrics}, str(last_path))
     print("=" * 80)
     print(f"Training Complete. Best Checkpoint saved at: {out_path}")
     print(f"Final Validation Metrics: Acc={best_metrics.get('accuracy', 0):.4f}, "
@@ -254,7 +259,7 @@ def train_pipeline(
 
     return {
         "output_path": str(out_path),
-        "best_epoch": epoch,
+        "best_epoch": best_epoch,
         "metrics": best_metrics,
     }
 

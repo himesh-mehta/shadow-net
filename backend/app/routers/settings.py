@@ -7,6 +7,9 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.config import get_settings
+from app.ml.factory import get_detector
+from app.ml.pretrained import DetectorUnavailable
+from starlette.concurrency import run_in_threadpool
 from app.db import get_db
 from app.routers.auth import require_roles
 from app.models.user import UserRole, UserInDB
@@ -75,6 +78,12 @@ async def update_system_settings(
         "updated_at": now,
         "updated_by": current_user.username,
     }
+
+    # Load requested model before persisting: a failed switch leaves existing settings intact.
+    try:
+        await run_in_threadpool(get_detector, demo_mode=new_data["demo_mode"])
+    except DetectorUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
 
     await db.settings.update_one(
         {"scope": "global"},

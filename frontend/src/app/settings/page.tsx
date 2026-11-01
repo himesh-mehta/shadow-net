@@ -24,10 +24,18 @@ export default function SettingsPage() {
     vad_sensitivity: 2,
     demo_mode: true,
   });
+  const [modelState, setModelState] = useState<string>("Checking detector…");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [savedMessage, setSavedMessage] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getHealth().then((health) => {
+      const d = health.detector;
+      setModelState(d?.loaded ? `Loaded: ${d.model_name} · ML inference · not locally validated` : d?.error || "Demo mode · no trained checkpoint loaded");
+    }).catch(() => setModelState("Backend unavailable"));
+  }, [savedMessage]);
 
   useEffect(() => {
     if (!isAdmin) {
@@ -115,6 +123,7 @@ export default function SettingsPage() {
           </span>
         </div>
 
+        <div className="rounded-lg border border-slate-700 bg-slate-900 p-3 text-xs text-slate-300 break-words">{modelState}</div>
         {error && (
           <div className="p-4 rounded-xl bg-red-950/60 border border-red-800 text-red-300 text-xs flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
@@ -240,7 +249,7 @@ export default function SettingsPage() {
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 leading-normal">
-                When Demo Mode is enabled, the system uses the deterministic synthetic fallback. Toggle off to require loaded ResNet-18 weights.
+                When Demo Mode is enabled, the system uses the deterministic synthetic fallback. Toggle off to use the configured pretrained detector. Download the model first.
               </p>
               <div className="flex items-center gap-3 pt-1">
                 <button
@@ -263,7 +272,7 @@ export default function SettingsPage() {
                       : "bg-slate-950 text-slate-500 border-slate-800"
                   }`}
                 >
-                  Production ML (PyTorch ResNet-18)
+                  Pretrained ML (Experimental)
                 </button>
               </div>
             </div>

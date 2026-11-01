@@ -1,5 +1,6 @@
 "use client";
 
+import { WavRecorder } from "@/lib/wavRecorder";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { AppShell } from "@/components/layout/AppShell";
@@ -50,7 +51,7 @@ export default function LiveDetectionPage() {
     details?: string[];
   } | null>(null);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaRecorderRef = useRef<WavRecorder | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
 
   const [analysis, setAnalysis] = useState<DetectionAnalysis>({
@@ -120,7 +121,7 @@ export default function LiveDetectionPage() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioStreamRef.current = stream;
 
-      const mediaRecorder = new MediaRecorder(stream);
+      const mediaRecorder = new WavRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
 
       mediaRecorder.ondataavailable = (event) => {
@@ -137,7 +138,7 @@ export default function LiveDetectionPage() {
       };
 
       // Emit chunk every 2000ms
-      mediaRecorder.start(2000);
+      mediaRecorder.start(4000);
       setIsMicStreaming(true);
     } catch (err: any) {
       setMicError("Microphone access failed: " + (err?.message || "Permission denied"));
@@ -213,7 +214,7 @@ export default function LiveDetectionPage() {
         const nextIdx = prev.length;
         const updated = [
           ...prev.slice(-9),
-          { window: `W-${nextIdx}`, fakeScore: parseFloat(conf.toFixed(2)) },
+          { window: `W-${nextIdx}`, fakeScore: Number(lastMessage.ai_probability ?? 0.5) },
         ];
         return updated;
       });
@@ -256,7 +257,7 @@ export default function LiveDetectionPage() {
             <div className="flex flex-wrap items-center gap-2 mt-2">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded font-mono text-[10px] font-bold tracking-wider bg-purple-950/70 border border-purple-700 text-purple-300 uppercase">
                 <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
-                MODEL STATUS: NOT TRAINED
+                MODEL STATUS: {analysis.model_status || "CHECKING"}
               </span>
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded font-mono text-[10px] font-bold tracking-wider bg-amber-950/70 border border-amber-700 text-amber-300 uppercase">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
@@ -412,7 +413,7 @@ export default function LiveDetectionPage() {
           <div className="bg-[#0b101d] border border-slate-800 rounded-xl p-4 space-y-2">
             <div className="text-xs text-slate-500 uppercase">CLASSIFICATION VERDICT</div>
             <div className="flex items-center gap-2">
-              <ThreatBadge type={analysis.display_verdict || "UNCERTAIN (MODEL NOT TRAINED)"} size="lg" />
+              <ThreatBadge type={analysis.display_verdict || "RESULT UNAVAILABLE"} size="lg" />
             </div>
             <div className="text-[10px] text-amber-400/90 font-mono">
               {analysis.model_status === "TRAINED" ? "Calibrated threshold engine" : "Untrained Prototype Mode"}

@@ -10,7 +10,11 @@ import logging
 from pathlib import Path
 from typing import Optional
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
+from starlette.concurrency import run_in_threadpool
+from app.db import get_db
+from app.config import get_settings
+from app.ml.factory import get_detector
 
 from app.ml.evaluator import run_evaluation
 
@@ -54,29 +58,11 @@ async def get_latest_evaluation_report():
         except Exception as e:
             logger.warning("Could not read existing evaluation report: %s", e)
 
-    # If no report exists, run on default sample directory
-    if not DEFAULT_AUDIO_DIR.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Sample dataset directory not found at {DEFAULT_AUDIO_DIR}",
-        )
-
-    try:
-        report = run_evaluation(audio_dir=DEFAULT_AUDIO_DIR)
-        REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(REPORT_PATH, "w", encoding="utf-8") as f:
-            json.dump(report, f, indent=2)
-        return report
-    except Exception as e:
-        logger.error("Failed to generate evaluation report: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Evaluation execution failed: {str(e)}",
-        )
+    raise HTTPException(status_code=404, detail="No evaluation report yet. Run an evaluation explicitly.")
 
 
 @router.post("/run")
-async def execute_evaluation(req: EvaluationRunRequest = EvaluationRunRequest()):
+async def execute_evaluation(req: EvaluationRunRequest = EvaluationRunRequest(), db=Depends(get_db)):
     """
     Trigger a model evaluation across the specified or sample audio dataset.
     Computes aggregate metrics, confusion matrix, per-file verdicts,
@@ -91,7 +77,11 @@ async def execute_evaluation(req: EvaluationRunRequest = EvaluationRunRequest())
         )
 
     try:
-        report = run_evaluation(
+        doc = await db.settings.find_one({"scope": "global"}) if db is not None else None
+        demo = doc.get("demo_mode", get_settings().DEMO_MODE) if doc else get_settings().DEMO_MODE
+        detector = await run_in_threadpool(get_detector, demo_mode=demo)
+        report = await run_in_threadpool(run_evaluation,
+            detector=detector,
             audio_dir=target_dir,
             real_threshold=req.real_threshold,
             deepfake_threshold=req.deepfake_threshold,
