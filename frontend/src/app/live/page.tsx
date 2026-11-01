@@ -37,7 +37,7 @@ import {
 } from "recharts";
 
 export default function LiveDetectionPage() {
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string>("test-session-live");
   const [activeAlert, setActiveAlert] = useState<{
     incident_id?: string;
     message: string;
@@ -270,8 +270,15 @@ export default function LiveDetectionPage() {
             {/* Live Mic Streaming Toggle */}
             <button
               onClick={handleToggleMic}
-              disabled={wsStatus !== "OPEN"}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 transition disabled:opacity-50 ${
+              disabled={wsStatus !== "OPEN" && (wsStatus as string) !== "connected"}
+              title={
+                wsStatus !== "OPEN" && (wsStatus as string) !== "connected"
+                  ? "Connecting to WebSocket telemetry server..."
+                  : isMicStreaming
+                  ? "Click to stop streaming microphone"
+                  : "Click to stream microphone to real-time ML detector"
+              }
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 transition disabled:opacity-50 disabled:cursor-not-allowed ${
                 isMicStreaming
                   ? "bg-rose-600 hover:bg-rose-500 text-white animate-pulse"
                   : "bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg shadow-cyan-950/40"
@@ -292,15 +299,15 @@ export default function LiveDetectionPage() {
 
             {/* WebSocket Connection Status */}
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-900 border border-slate-800 text-[11px]">
-              {wsStatus === "OPEN" ? (
+              {wsStatus === "OPEN" || (wsStatus as string) === "connected" ? (
                 <>
                   <Wifi className="w-3 h-3 text-emerald-400" />
                   <span className="text-emerald-400 font-semibold">WS CONNECTED</span>
                 </>
-              ) : wsStatus === "CONNECTING" ? (
+              ) : wsStatus === "CONNECTING" || (wsStatus as string) === "connecting" ? (
                 <>
                   <RefreshCw className="w-3 h-3 text-amber-400 animate-spin" />
-                  <span className="text-amber-400">CONNECTING...</span>
+                  <span className="text-amber-400 font-semibold">CONNECTING...</span>
                 </>
               ) : (
                 <>
