@@ -8,6 +8,7 @@ import { WaveformVisualizer } from "@/components/ui/WaveformVisualizer";
 import { AnalysisTimeline, TimelineEvent } from "@/components/ui/AnalysisTimeline";
 import { SegmentTimeline, AudioSegment } from "@/components/ui/SegmentTimeline";
 import { api, API_URL } from "@/lib/api";
+import { formatScore, getScoreSublabel } from "@/lib/scoreFormatting";
 import { Session, DetectionAnalysis } from "@/types";
 import {
   Mic,
@@ -173,7 +174,7 @@ export default function SessionPage() {
                     audio_base64: base64Data,
                   });
                   setLastAnalysis(res);
-                  setStatusMessage(`Live window analyzed: ${res.prediction} (${(res.confidence * 100).toFixed(1)}%) in ${res.detection_latency_ms?.toFixed(1) ?? 20}ms`);
+                  setStatusMessage(`Live window analyzed: ${res.prediction} (AI score: ${formatScore(res.ai_probability)}, Real score: ${formatScore(res.real_probability)}) in ${res.detection_latency_ms?.toFixed(1) ?? 20}ms`);
                   
                   // Append to live segment timeline
                   setSegments((prev) => {
@@ -184,7 +185,8 @@ export default function SessionPage() {
                         window_index: idx,
                         start_sec: idx * 4.0,
                         end_sec: (idx + 1) * 4.0,
-                        fake_probability: res.ai_probability ?? 0.5,
+                        fake_probability: typeof res.ai_probability === "number" ? res.ai_probability : (res.prediction === "REAL" ? 0 : 1),
+                        real_probability: typeof res.real_probability === "number" ? res.real_probability : undefined,
                         prediction: res.prediction,
                         confidence: res.confidence,
                         threat_level: res.threat_level,
@@ -299,7 +301,7 @@ export default function SessionPage() {
               receivedVerdict = true;
               setLastAnalysis({ ...event, num_windows: event.total_windows, windows: [] });
               setStatusMessage(
-                `Stream complete: ${event.display_verdict || event.prediction} (${(event.confidence * 100).toFixed(1)}% confidence, ${event.detection_latency_ms?.toFixed(1)}ms)`
+                `Stream complete: ${event.display_verdict || event.prediction} (AI score: ${formatScore(event.ai_probability)}, Real score: ${formatScore(event.real_probability)}, ${event.detection_latency_ms?.toFixed(1)}ms)`
               );
               if (activeSessionId) fetchTimeline(activeSessionId);
             }
@@ -490,24 +492,34 @@ export default function SessionPage() {
                         size="sm"
                       />
                     </div>
+                    <div className="text-[9px] text-amber-400/90 font-mono mt-1">
+                      Threshold-based decision
+                    </div>
                   </div>
                   <div className="p-2.5 rounded bg-[#0b101d] border border-slate-800">
                     <div className="text-[10px] text-slate-500 uppercase">AI score</div>
                     <div className="text-sm font-bold text-white mt-1">
-                      {(((lastAnalysis.ai_probability !== undefined ? lastAnalysis.ai_probability : lastAnalysis.confidence)) * 100).toFixed(1)}%
+                      {formatScore(lastAnalysis.ai_probability)}
                     </div>
-                    <div className="text-[9px] text-amber-400/90 font-mono">Uncalibrated Placeholder</div>
+                    <div className="text-[9px] text-slate-400 mt-0.5">
+                      Real score: {formatScore(lastAnalysis.real_probability)}
+                    </div>
+                    <div className="text-[9px] text-amber-400/90 font-mono mt-1">
+                      {getScoreSublabel(lastAnalysis.mode, lastAnalysis.model_status)}
+                    </div>
                   </div>
                   <div className="p-2.5 rounded bg-[#0b101d] border border-slate-800">
                     <div className="text-[10px] text-slate-500 uppercase">Detection Latency</div>
                     <div className="text-sm font-bold text-cyan-400 mt-1">
-                      {lastAnalysis.detection_latency_ms?.toFixed(1) ?? 20} ms
+                      {typeof lastAnalysis.detection_latency_ms === "number" && lastAnalysis.detection_latency_ms > 0
+                        ? `${lastAnalysis.detection_latency_ms.toFixed(1)} ms`
+                        : "Unavailable"}
                     </div>
                     <div className="text-[9px] text-slate-500 font-mono">{lastAnalysis.num_windows ?? 0} windows</div>
                   </div>
                   <div className="p-2.5 rounded bg-[#0b101d] border border-slate-800">
                     <div className="text-[10px] text-slate-500 uppercase">Model Target</div>
-                    <div className="text-xs text-slate-200 font-mono font-semibold mt-1 truncate">
+                    <div className="text-xs text-slate-200 font-mono font-semibold mt-1 truncate" title={lastAnalysis.model_name}>
                       {lastAnalysis.model_name || "shadownet-detector"}
                     </div>
                     <div className="text-[9px] text-purple-400 font-mono">Version: {lastAnalysis.model_version || "v1"}</div>
@@ -517,9 +529,14 @@ export default function SessionPage() {
                 {/* Acoustic Explanation (Why) */}
                 {lastAnalysis.explanation?.top_reason && (
                   <div className="p-3 rounded-lg bg-[#070d18] border border-cyan-900/40 text-xs space-y-1">
-                    <div className="text-[10px] text-cyan-400 font-semibold uppercase tracking-wider flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-                      Acoustic Observations
+                    <div className="flex items-center justify-between">
+                      <div className="text-[10px] text-cyan-400 font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+                        Acoustic observations
+                      </div>
+                      <span className="text-[9px] text-slate-500">
+                        Acoustic observations only; not a model explanation.
+                      </span>
                     </div>
                     <p className="text-slate-200 font-medium text-xs">
                       {lastAnalysis.explanation.top_reason}

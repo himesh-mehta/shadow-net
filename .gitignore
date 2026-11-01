@@ -37,6 +37,7 @@ venv.bak/
 
 # Node / Next.js
 node_modules/
+*.tsbuildinfo
 .next/
 out/
 npm-debug.log*
@@ -63,6 +64,8 @@ model/*.bin
 htmlcov/
 .eslintcache
 .turbo
+reports/
+datasets/recordings/
 
 # OS Specific
 .DS_Store

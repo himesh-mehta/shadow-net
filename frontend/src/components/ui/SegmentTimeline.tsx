@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import type { PredictionType } from "@/types";
+import { formatScore } from "@/lib/scoreFormatting";
 
 export interface AudioSegment {
   window_index: number;
@@ -53,12 +54,12 @@ function Tooltip({ segment }: { segment: AudioSegment }) {
         </span>
       </div>
       <div className="flex justify-between text-slate-400">
-        <span>AI score</span>
-        <span className="text-slate-200">{(segment.fake_probability * 100).toFixed(1)}%</span>
+        <span>Window AI score</span>
+        <span className="text-slate-200">{formatScore(segment.ai_probability !== undefined ? segment.ai_probability : segment.fake_probability)}</span>
       </div>
       <div className="flex justify-between text-slate-400">
-        <span>Confidence</span>
-        <span className="text-slate-200">{(segment.confidence * 100).toFixed(1)}%</span>
+        <span>Window Real score</span>
+        <span className="text-slate-200">{formatScore(segment.real_probability)}</span>
       </div>
       <div className="flex justify-between text-slate-400">
         <span>Window Range</span>

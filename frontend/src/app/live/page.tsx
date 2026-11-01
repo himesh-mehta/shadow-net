@@ -8,6 +8,7 @@ import { ThreatBadge } from "@/components/ui/ThreatBadge";
 import { SpectrogramMatrix } from "@/components/ui/SpectrogramMatrix";
 import { useDetectionWebSocket } from "@/lib/useWebSocket";
 import { api } from "@/lib/api";
+import { formatScore, scoreToWidth, getScoreSublabel } from "@/lib/scoreFormatting";
 import { DetectionAnalysis, PredictionType, ThreatLevel, WindowResult } from "@/types";
 import {
   Radio,
@@ -55,27 +56,25 @@ export default function LiveDetectionPage() {
   const audioStreamRef = useRef<MediaStream | null>(null);
 
   const [analysis, setAnalysis] = useState<DetectionAnalysis>({
-    session_id: "standby-eval",
-    mode: "demo",
-    model_name: "shadownet-audio-detector",
-    model_version: "v1",
-    model_status: "NOT_TRAINED",
-    is_heuristic_placeholder: true,
-    display_verdict: "UNCERTAIN (MODEL NOT TRAINED)",
-    prediction: "UNCERTAIN",
-    confidence: 0.50,
-    ai_probability: 0.50,
-    real_probability: 0.50,
+    session_id: "test-session-live",
+    mode: "ml",
+    model_name: "Gustking/wav2vec2-large-xlsr-deepfake-audio-classification",
+    model_version: "f7050b586236dc910d1157f430def2d0647b02b4",
+    model_status: "TRAINED",
+    is_heuristic_placeholder: false,
+    display_verdict: "STANDBY",
+    prediction: "REAL",
+    confidence: 0,
+    ai_probability: undefined,
+    real_probability: undefined,
     threat_level: "LOW",
     response_action: "NONE",
-    detection_latency_ms: 12.5,
+    detection_latency_ms: 0,
     windows: [],
     spectrogram_shape: [128, 64],
   });
 
-  const [rollingHistory, setRollingHistory] = useState<Array<{ window: string; fakeScore: number }>>([
-    { window: "W-0", fakeScore: 0.1 },
-  ]);
+  const [rollingHistory, setRollingHistory] = useState<Array<{ window: string; fakeScore: number }>>([]);
 
   // Query active session ID on mount
   useEffect(() => {
@@ -187,8 +186,8 @@ export default function LiveDetectionPage() {
         prediction: pred,
         display_verdict: lastMessage.display_verdict || prev.display_verdict,
         confidence: conf,
-        ai_probability: lastMessage.ai_probability ?? conf,
-        real_probability: lastMessage.real_probability ?? (1.0 - (lastMessage.ai_probability ?? conf)),
+        ai_probability: typeof lastMessage.ai_probability === "number" ? lastMessage.ai_probability : undefined,
+        real_probability: typeof lastMessage.real_probability === "number" ? lastMessage.real_probability : undefined,
         threat_level: threat,
         detection_latency_ms: latency,
         mode,
@@ -209,19 +208,21 @@ export default function LiveDetectionPage() {
         });
       }
 
-      // Append to rolling chart
-      setRollingHistory((prev) => {
-        const nextIdx = prev.length;
-        const updated = [
-          ...prev.slice(-9),
-          { window: `W-${nextIdx}`, fakeScore: Number(lastMessage.ai_probability ?? 0.5) },
-        ];
-        return updated;
-      });
+      // Append to rolling chart using the exact same analysis event ai_probability
+      if (typeof lastMessage.ai_probability === "number" && !isNaN(lastMessage.ai_probability)) {
+        setRollingHistory((prev) => {
+          const nextIdx = prev.length;
+          const updated = [
+            ...prev.slice(-9),
+            { window: `W-${nextIdx}`, fakeScore: lastMessage.ai_probability },
+          ];
+          return updated;
+        });
+      }
 
       if (pred === "DEEPFAKE") {
         setActiveAlert({
-          message: `Deepfake acoustic signature intercepted with ${(conf * 100).toFixed(1)}% confidence.`,
+          message: `Deepfake acoustic signature intercepted with ${formatScore(lastMessage.ai_probability)} AI score.`,
           requires_verification: true,
         });
       }
@@ -375,7 +376,7 @@ export default function LiveDetectionPage() {
                   CRITICAL SYNTHETIC SIGNATURE INTERCEPTED
                 </div>
                 <div className="text-xs text-red-300/80">
-                  Acoustic artifact confidence: {(analysis.confidence * 100).toFixed(1)}%. Mitigation: {analysis.response_action}.
+                  AI score: {formatScore(analysis.ai_probability)} &bull; Real score: {formatScore(analysis.real_probability)}. Mitigation: {analysis.response_action}.
                   {activeAlert?.message && ` (${activeAlert.message})`}
                 </div>
               </div>
@@ -423,18 +424,23 @@ export default function LiveDetectionPage() {
               <ThreatBadge type={analysis.display_verdict || "RESULT UNAVAILABLE"} size="lg" />
             </div>
             <div className="text-[10px] text-amber-400/90 font-mono">
-              {analysis.model_status === "TRAINED" ? "Calibrated threshold engine" : "Untrained Prototype Mode"}
+              Threshold-based decision
             </div>
           </div>
 
-          {/* Confidence Gauge */}
+          {/* AI score Card */}
           <div className="bg-[#0b101d] border border-slate-800 rounded-xl p-4 space-y-2">
             <div className="flex justify-between text-xs text-slate-500 uppercase">
-              <span>AI PROB (HEURISTIC)</span>
-              <span>{(analysis.confidence * 100).toFixed(1)}%</span>
+              <span>AI score</span>
+              <span>{formatScore(analysis.ai_probability)}</span>
             </div>
-            <div className="text-2xl font-bold text-white">
-              {(analysis.confidence * 100).toFixed(1)}%
+            <div className="flex items-baseline justify-between">
+              <div className="text-2xl font-bold text-white">
+                {formatScore(analysis.ai_probability)}
+              </div>
+              <div className="text-xs text-slate-400 font-mono">
+                Real: {formatScore(analysis.real_probability)}
+              </div>
             </div>
             {/* Progress bar */}
             <div className="w-full bg-slate-900 h-2 rounded-full overflow-hidden border border-slate-800">
@@ -448,10 +454,12 @@ export default function LiveDetectionPage() {
                     ? "bg-emerald-500"
                     : "bg-amber-500"
                 }`}
-                style={{ width: `${Math.min(100, analysis.confidence * 100)}%` }}
+                style={{ width: scoreToWidth(analysis.ai_probability) }}
               />
             </div>
-            <div className="text-[10px] text-amber-400 font-mono">Uncalibrated Placeholder Score</div>
+            <div className="text-[10px] text-amber-400 font-mono">
+              {getScoreSublabel(analysis.mode, analysis.model_status)}
+            </div>
           </div>
 
           {/* Measured Detection Latency */}
@@ -461,7 +469,9 @@ export default function LiveDetectionPage() {
               <Clock className="w-4 h-4 text-cyan-400" />
             </div>
             <div className="text-2xl font-bold text-cyan-400">
-              {analysis.detection_latency_ms?.toFixed(1) ?? "20.0"} <span className="text-xs font-normal text-slate-500">ms</span>
+              {typeof analysis.detection_latency_ms === "number" && analysis.detection_latency_ms > 0
+                ? `${analysis.detection_latency_ms.toFixed(1)} ms`
+                : "Unavailable"}
             </div>
             <div className="text-[10px] text-slate-500">Fast Fourier &amp; tensor forward pass</div>
           </div>
@@ -472,24 +482,26 @@ export default function LiveDetectionPage() {
               <span>MODEL TARGET</span>
               <Cpu className="w-4 h-4 text-purple-400" />
             </div>
-            <div className="text-sm font-bold text-slate-200 font-mono truncate">
-              {analysis.model_name}
+            <div className="text-sm font-bold text-slate-200 font-mono truncate" title={analysis.model_name}>
+              {analysis.model_name || "Unavailable"}
             </div>
             <div className="text-[10px] text-purple-400 font-semibold uppercase">
-              STATUS: {analysis.model_status || "NOT_TRAINED"} (v{analysis.model_version || "1"})
+              STATUS: {analysis.model_status || "NOT_TRAINED"} {analysis.model_version ? `(v${analysis.model_version})` : ""}
             </div>
           </div>
         </div>
 
-        {/* Acoustic Forensic Attribution Panel if Available */}
+        {/* Acoustic Observations Panel if Available */}
         {lastExplanation && (
           <div className="p-4 rounded-xl bg-[#09101f] border border-cyan-900/50 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-                Live Acoustic Forensic Attribution (Why)
+                Acoustic observations
               </span>
-              <span className="text-[10px] text-slate-500">Real-time Spectral Explainer</span>
+              <span className="text-[10px] text-slate-500">
+                Acoustic observations only; not a model explanation.
+              </span>
             </div>
             <p className="text-sm font-medium text-slate-200">
               {lastExplanation.top_reason}
@@ -538,23 +550,30 @@ export default function LiveDetectionPage() {
             </div>
 
             <div className="h-52 w-full pt-2">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={rollingHistory}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                  <XAxis dataKey="window" stroke="#64748b" fontSize={10} />
-                  <YAxis domain={[0, 1]} stroke="#64748b" fontSize={10} />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: "#020617", borderColor: "#334155", fontSize: 11 }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="fakeScore"
-                    stroke="#ef4444"
-                    strokeWidth={2.5}
-                    dot={{ fill: "#ef4444", r: 4 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+              {rollingHistory.length === 0 ? (
+                <div className="h-full flex items-center justify-center text-xs text-slate-500 font-mono">
+                  Stream standby. No audio windows analyzed yet.
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={rollingHistory}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                    <XAxis dataKey="window" stroke="#64748b" fontSize={10} />
+                    <YAxis domain={[0, 1]} stroke="#64748b" fontSize={10} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: "#020617", borderColor: "#334155", fontSize: 11 }}
+                      formatter={(val: any) => [`${(Number(val) * 100).toFixed(1)}%`, "AI score"]}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="fakeScore"
+                      stroke="#ef4444"
+                      strokeWidth={2.5}
+                      dot={{ fill: "#ef4444", r: 4 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
             </div>
           </div>
         </div>
@@ -571,31 +590,41 @@ export default function LiveDetectionPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {analysis.windows.map((win) => (
-                <div
-                  key={win.window_index}
-                  className="p-3.5 rounded-lg bg-slate-950/80 border border-slate-800 space-y-2 text-xs"
-                >
-                  <div className="flex justify-between items-center pb-2 border-b border-slate-800/80">
-                    <span className="text-slate-400 font-bold">WINDOW #{win.window_index}</span>
-                    <ThreatBadge type={win.threat_level} size="sm" />
+              {analysis.windows.map((win) => {
+                const winAiScore = win.ai_probability !== undefined ? win.ai_probability : win.fake_probability;
+                const winRealScore = win.real_probability !== undefined ? win.real_probability : undefined;
+                return (
+                  <div
+                    key={win.window_index}
+                    className="p-3.5 rounded-lg bg-slate-950/80 border border-slate-800 space-y-2 text-xs"
+                  >
+                    <div className="flex justify-between items-center pb-2 border-b border-slate-800/80">
+                      <span className="text-slate-400 font-bold">WINDOW #{win.window_index}</span>
+                      <ThreatBadge type={win.threat_level} size="sm" />
+                    </div>
+                    <div className="flex justify-between text-slate-400">
+                      <span>Window Span:</span>
+                      <span className="text-slate-200">[{win.start_sec?.toFixed(1) ?? 0}s &rarr; {win.end_sec?.toFixed(1) ?? 2}s]</span>
+                    </div>
+                    <div className="flex justify-between text-slate-400">
+                      <span>Window AI score:</span>
+                      <span className={typeof winAiScore === "number" ? (winAiScore >= 0.65 ? "text-red-400 font-bold" : winAiScore < 0.35 ? "text-emerald-400 font-bold" : "text-amber-400 font-bold") : "text-slate-400"}>
+                        {formatScore(winAiScore)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-slate-400">
+                      <span>Window Real score:</span>
+                      <span className="text-slate-300">
+                        {formatScore(winRealScore)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-slate-400">
+                      <span>Spectrogram Shape:</span>
+                      <span className="text-slate-300">({win.mel_shape?.join(", ") ?? "128, 64"})</span>
+                    </div>
                   </div>
-                  <div className="flex justify-between text-slate-400">
-                    <span>Timestamp Span:</span>
-                    <span className="text-slate-200">[{win.start_sec?.toFixed(1) ?? 0}s &rarr; {win.end_sec?.toFixed(1) ?? 2}s]</span>
-                  </div>
-                  <div className="flex justify-between text-slate-400">
-                    <span>Synthetic Prob:</span>
-                    <span className={win.fake_probability >= 0.65 ? "text-red-400 font-bold" : win.fake_probability < 0.35 ? "text-emerald-400 font-bold" : "text-amber-400 font-bold"}>
-                      {(win.fake_probability * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-slate-400">
-                    <span>Spectrogram Shape:</span>
-                    <span className="text-slate-300">({win.mel_shape?.join(", ") ?? "128, 64"})</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

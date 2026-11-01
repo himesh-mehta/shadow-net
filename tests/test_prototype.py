@@ -157,3 +157,34 @@ def test_evaluation_counts_ai_suspected_as_a_positive(client, tmp_path, monkeypa
 def test_exact_window_does_not_add_a_duplicate_tail():
     from app.audio.features import slice_into_windows
     assert len(slice_into_windows(np.ones(32000, dtype=np.float32), window_sec=2.0, hop_sec=1.0)) == 1
+
+
+def test_score_mapping_payload_contract(client, monkeypatch):
+    """Ensure API preserves distinct ai_probability, real_probability, and confidence."""
+    c, db = client
+    c.put("/settings", json={"demo_mode": False})
+
+    class RealPredictor:
+        name, version, mode, model_status = "test-real-detector", "test", "ml", "TRAINED"
+        is_loaded = is_trained = uses_waveform = True
+        is_heuristic_placeholder = False
+        def __init__(self, *args, **kwargs): pass
+        def predict_audio(self, audio, sr=16000, **kwargs):
+            return {"fake_probability": 0.069, "ai_probability": 0.069, "real_probability": 0.931}
+
+    monkeypatch.setattr(factory, "_CURRENT_DETECTOR", None)
+    monkeypatch.setattr(factory, "PretrainedAudioDetector", RealPredictor)
+
+    response = c.post(
+        "/audio/analyze",
+        files={"file": ("speech.wav", wav(), "audio/wav")},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["prediction"] == "REAL"
+    assert data["display_verdict"] == "REAL"
+    # ai_probability must be 0.069, NOT substituted by confidence (0.931)
+    assert abs(data["ai_probability"] - 0.069) < 1e-4
+    assert abs(data["real_probability"] - 0.931) < 1e-4
+    assert abs(data["confidence"] - 0.931) < 1e-4
+    assert data["ai_probability"] != data["confidence"]

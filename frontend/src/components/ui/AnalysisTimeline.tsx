@@ -2,6 +2,7 @@
 
 import React from "react";
 import { Clock, TrendingUp, AlertTriangle, CheckCircle, HelpCircle, Zap } from "lucide-react";
+import { formatScore } from "@/lib/scoreFormatting";
 
 export interface TimelineEvent {
   event_id: string;
@@ -159,8 +160,8 @@ export function AnalysisTimeline({ events, isLoading }: AnalysisTimelineProps) {
                 {/* Stats row */}
                 <div className="flex gap-4 text-[10px] text-slate-500">
                   <span>
-                    fake_prob:{" "}
-                    <span className="text-slate-300 font-mono">{(ev.fake_probability * 100).toFixed(1)}%</span>
+                    AI score:{" "}
+                    <span className="text-slate-300 font-mono">{formatScore(ev.fake_probability)}</span>
                   </span>
                   <span>
                     windows:{" "}
